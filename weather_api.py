@@ -1,5 +1,6 @@
 import requests
 import math
+import os  # 추가: 운영체제(또는 깃허브) 환경변수를 읽어오기 위한 라이브러리
 from datetime import datetime, timedelta
 
 # 1. 위도/경도를 기상청 격자(X, Y)로 변환하는 공식 함수
@@ -76,9 +77,10 @@ def get_current_weather(lat, lon, api_key):
 # 실행 테스트 (대장님의 정보로 채워주세요!)
 # ==========================================
 if __name__ == "__main__":
-    MY_API_KEY = "여기에_발급받은_일반_인증키(Decoding)_입력"
+    # 수정: 코드에 직접 적지 않고 'WEATHER_API_KEY'라는 이름의 숨겨진 값을 불러옵니다.
+    MY_API_KEY = os.environ.get("WEATHER_API_KEY") 
     
-    # 예시: 현장 위도 경도 (구글 지도 등에서 우클릭하면 나옵니다)
+    # 예시: 현장 위도 경도 (용인 현장 위경도로 수정)
     TARGET_LAT = 37.2635   
     TARGET_LON = 127.1523  
     
