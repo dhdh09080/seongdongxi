@@ -64,18 +64,18 @@ def get_current_weather(lat, lon, api_key):
 
     return weather_data
 
-# 3. 이미지 스냅샷 생성
+# 3. 레이아웃 고도화 스냅샷 생성
 def create_snapshot(weather_data):
     kst_now = datetime.now() + timedelta(hours=9)
     now_str_date = kst_now.strftime('%-m월 %-d일')
     now_str_time = kst_now.strftime('%H시')
     
-    # 이미지 사이즈 설정 (1080x1350)
+    # 1080x1350 사이즈
     img_w, img_h = 1080, 1350
     img = Image.new('RGB', (img_w, img_h), color=(245, 245, 245))
     draw = ImageDraw.Draw(img)
     
-    # 한글 폰트 다운로드 (안정적인 링크)
+    # 나눔고딕 폰트 적용
     font_path = "NanumGothic.ttf"
     if not os.path.exists(font_path):
         font_url = "https://github.com/google/fonts/raw/main/ofl/nanumgothic/NanumGothic-Regular.ttf"
@@ -87,20 +87,20 @@ def create_snapshot(weather_data):
     font_sub_title = ImageFont.truetype(font_path, 40)
     font_body = ImageFont.truetype(font_path, 35)
     font_info = ImageFont.truetype(font_path, 40)
-    font_info_body = ImageFont.truetype(font_path, 26)
+    font_info_body = ImageFont.truetype(font_path, 26) # 텍스트 넘침 방지를 위해 사이즈 조정
     font_prevention = ImageFont.truetype(font_path, 40)
-    font_footer = ImageFont.truetype(font_path, 32)
+    font_footer = ImageFont.truetype(font_path, 28) # 하단 겹침 방지 사이즈 조정
     
-    # 1. 헤더 (날짜 및 시간)
+    # 1. 헤더
     draw.rectangle([(0, 0), (img_w, 150)], fill=(255, 255, 255))
     draw.text((img_w // 2, 75), f"성동자이리버뷰 {now_str_date} 오늘의 {now_str_time} 날씨", font=font_title, fill=(30, 30, 30), anchor="mm")
     
-    # 2. 메인 데이터 (체감온도 영역 - GS Blue)
+    # 2. 메인 데이터 (체감온도)
     draw.rectangle([(0, 150), (img_w, 550)], fill=(0, 71, 153))
     draw.text((img_w // 2, 330), f"{weather_data['feels_like']}°C", font=font_main_feels, fill=(255, 255, 255), anchor="mm")
     draw.text((img_w // 2, 490), "체감온도", font=font_sub_title, fill=(200, 220, 255), anchor="mm")
     
-    # 3. 서브 데이터 (기온, 습도, 풍속 - 밝은 회색)
+    # 3. 서브 데이터
     draw.rectangle([(50, 580), (1030, 830)], fill=(235, 235, 235))
     
     draw.text((260, 680), f"{weather_data['temp']}°C", font=font_data, fill=(40, 40, 40), anchor="mm")
@@ -117,40 +117,40 @@ def create_snapshot(weather_data):
     if os.path.exists(logo_path):
         try:
             logo = Image.open(logo_path).convert("RGBA")
-            logo.thumbnail((220, 80)) # 사이즈 최적화
-            # 투명도(Alpha)를 유지하며 합성
-            img.paste(logo, (810, 850), logo)
+            logo.thumbnail((200, 70))
+            img.paste(logo, (810, 840), logo)
         except Exception as e:
             print("로고 합성 실패:", e)
 
-    # 5. 폭염특보 기준 영역
-    draw.rectangle([(50, 950), (1030, 1150)], fill=(242, 248, 255), outline=(0, 71, 153), width=3)
-    draw.text((img_w // 2, 995), "폭염특보 기준", font=font_info, fill=(0, 71, 153), anchor="mm")
+    # 5. 폭염특보 기준 영역 (박스 세로 길이 대폭 늘림)
+    draw.rectangle([(50, 910), (1030, 1150)], fill=(242, 248, 255), outline=(0, 71, 153), width=3)
+    draw.text((img_w // 2, 955), "폭염특보 기준", font=font_info, fill=(0, 71, 153), anchor="mm")
     
+    # 문장 잘림을 방지하기 위해 강제 줄바꿈(\n) 적용
     body_text_info = (
         "• 폭염주의보: 일 최고 체감온도 33°C 이상인 상태가 2일 이상 지속될 것으로 예상될 때\n\n"
         "• 폭염경보: 일 최고 체감온도 35°C 이상인 상태가 2일 이상 지속될 것으로 예상될 때\n\n"
-        "• 폭염중대경보: 체감온도 38°C 이상 또는 일 최고기온 39°C 이상인 상태가 1일 이상 지속될 때"
+        "• 폭염중대경보: 체감온도 38°C 이상 또는 일 최고기온 39°C 이상인 상태가\n"
+        "                    1일 이상 지속될 것으로 예상될 때"
     )
-    # 여러 줄 텍스트 깔끔하게 정렬
-    draw.multiline_text((70, 1035), body_text_info, font=font_info_body, fill=(60, 60, 60), spacing=8)
+    draw.multiline_text((75, 1000), body_text_info, font=font_info_body, fill=(60, 60, 60), spacing=10)
 
     # 6. 온열질환 예방 5대 수칙 영역
-    draw.rectangle([(50, 1170), (1030, 1265)], fill=(255, 255, 255))
+    draw.rectangle([(50, 1170), (1030, 1270)], fill=(255, 255, 255))
     draw.text((img_w // 2, 1205), "온열질환 예방 5대 수칙", font=font_prevention, fill=(0, 71, 153), anchor="mm")
     draw.text((img_w // 2, 1245), "물, 바람·그늘, 휴식, 보냉장구, 응급조치", font=font_body, fill=(40, 40, 40), anchor="mm")
 
-    # 7. 푸터 (관리자 당부 영역 - 노란색 띠)
-    draw.rectangle([(0, 1285), (img_w, img_h)], fill=(255, 215, 0)) 
+    # 7. 푸터 (관리자 당부 영역)
+    draw.rectangle([(0, 1290), (img_w, img_h)], fill=(255, 215, 0)) 
     
-    # 깨짐 방지를 위해 이모지 대신 그래픽으로 직접 예쁜 빨간 원 그리기
-    draw.ellipse([(80, 1303), (110, 1333)], fill=(230, 30, 30))
-    draw.ellipse([(970, 1303), (1000, 1333)], fill=(230, 30, 30))
+    # 사이렌 이모지 대신 그리는 예쁜 빨간 원 (위치 바깥으로 넓힘)
+    draw.ellipse([(60, 1305), (90, 1335)], fill=(230, 30, 30))
+    draw.ellipse([(990, 1305), (1020, 1335)], fill=(230, 30, 30))
     
     footer_text = "근로자들이 안전하게 여름을 나실 수 있도록 세심한 관리 부탁드립니다"
-    draw.text((img_w // 2, 1318), footer_text, font=font_footer, fill=(30, 30, 30), anchor="mm")
+    draw.text((img_w // 2, 1320), footer_text, font=font_footer, fill=(30, 30, 30), anchor="mm")
 
-    # 폴더 생성 및 이미지 저장
+    # 폴더 생성 및 저장
     os.makedirs("snapshots", exist_ok=True)
     filename = f"snapshots/weather_{kst_now.strftime('%Y%m%d_%H%M')}.png"
     img.save(filename)
@@ -159,7 +159,7 @@ def create_snapshot(weather_data):
 if __name__ == "__main__":
     MY_API_KEY = os.environ.get("WEATHER_API_KEY") 
     
-    # 성동자이리버뷰 현장 위경도
+    # 성동자이리버뷰 현장
     TARGET_LAT = 37.5672   
     TARGET_LON = 127.0502  
     
