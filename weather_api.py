@@ -30,17 +30,20 @@ def lat_lon_to_grid(lat, lon):
     
     return int(x), int(y)
 
-# 2. 기상청 날씨 데이터 가져오기
+# 2. 기상청 날씨 데이터 가져오기 (시차 문제 해결 완료)
 def get_current_weather(lat, lon, api_key):
     nx, ny = lat_lon_to_grid(lat, lon)
-    now = datetime.now() - timedelta(minutes=40)
+    
+    # 수정된 부분: 깃허브 서버 시간(UTC)에 9시간을 더해 한국 시간(KST)으로 맞춤
+    kst_now = datetime.now() + timedelta(hours=9)
+    request_time = kst_now - timedelta(minutes=40)
     
     url = 'http://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getUltraSrtNcst'
     params = {
         'ServiceKey': api_key,
         'pageNo': '1', 'numOfRows': '1000', 'dataType': 'JSON',
-        'base_date': now.strftime('%Y%m%d'),
-        'base_time': now.strftime('%H00'),
+        'base_date': request_time.strftime('%Y%m%d'),
+        'base_time': request_time.strftime('%H00'),
         'nx': nx, 'ny': ny
     }
 
@@ -65,15 +68,12 @@ def get_current_weather(lat, lon, api_key):
 
 # 3. 이미지 스냅샷 생성
 def create_snapshot(weather_data):
-    # 한국 시간(KST) 기준으로 시간 맞추기 (깃허브 서버는 UTC 기준이므로 9시간 더함)
     kst_now = datetime.now() + timedelta(hours=9)
     now_str = kst_now.strftime('%Y-%m-%d %H:00')
     
-    # 배경 이미지 생성 (어두운 남색)
     img = Image.new('RGB', (400, 300), color=(44, 62, 80))
     draw = ImageDraw.Draw(img)
     
-    # 깃허브 서버에 한글 폰트가 없으므로 임시 다운로드
     font_path = "NanumGothic.ttf"
     if not os.path.exists(font_path):
         font_url = "https://github.com/google/fonts/raw/main/ofl/nanumgothic/NanumGothic-Regular.ttf"
@@ -82,7 +82,6 @@ def create_snapshot(weather_data):
     font_title = ImageFont.truetype(font_path, 24)
     font_body = ImageFont.truetype(font_path, 30)
     
-    # 텍스트 그리기
     draw.text((20, 20), f"[{now_str} 현장 기상]", font=font_title, fill=(200, 200, 200))
     
     body_text = (
@@ -93,20 +92,15 @@ def create_snapshot(weather_data):
     )
     draw.text((20, 80), body_text, font=font_body, fill=(255, 255, 255))
     
-    # snapshots 폴더 생성 및 저장
     os.makedirs("snapshots", exist_ok=True)
     filename = f"snapshots/weather_{kst_now.strftime('%Y%m%d_%H%M')}.png"
     img.save(filename)
     print(f"스냅샷 저장 완료: {filename}")
 
-# ==========================================
-# 실행 부분
-# ==========================================
 if __name__ == "__main__":
-    # 깃허브 Secrets에서 키 불러오기
     MY_API_KEY = os.environ.get("WEATHER_API_KEY") 
     
-    # 현장 위도/경도 (필요시 수정)
+    # 현장 위도/경도 (용인 현장)
     TARGET_LAT = 37.2635   
     TARGET_LON = 127.1523  
     
