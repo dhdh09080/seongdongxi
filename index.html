@@ -1,0 +1,940 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>성동자이리버뷰 · 온열질환 예방 대시보드</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&family=Bebas+Neue&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0a0e1a;
+  --bg2: #111827;
+  --bg3: #1a2235;
+  --border: rgba(255,255,255,0.07);
+  --border2: rgba(255,255,255,0.14);
+  --text: #e8eaf0;
+  --text2: #8a92a8;
+  --text3: #5a6175;
+  --blue: #3b82f6;
+  --blue-dim: rgba(59,130,246,0.15);
+  --amber: #f59e0b;
+  --amber-dim: rgba(245,158,11,0.15);
+  --orange: #f97316;
+  --orange-dim: rgba(249,115,22,0.15);
+  --red: #ef4444;
+  --red-dim: rgba(239,68,68,0.15);
+  --green: #22c55e;
+  --green-dim: rgba(34,197,94,0.12);
+  --stage0: #22c55e;
+  --stage1: #3b82f6;
+  --stage2: #f59e0b;
+  --stage3: #f97316;
+  --stage4: #ef4444;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: 'Noto Sans KR', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  font-size: 14px;
+}
+.layout { display: grid; grid-template-rows: auto 1fr; min-height: 100vh; }
+
+/* ── HEADER ── */
+header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 24px; height: 56px;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+}
+.header-left { display: flex; align-items: center; gap: 12px; }
+.site-badge {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 11px; letter-spacing: 2px;
+  color: var(--blue); border: 1px solid var(--blue);
+  padding: 3px 8px; border-radius: 3px;
+}
+.site-name { font-size: 15px; font-weight: 700; letter-spacing: -0.3px; }
+.header-right { display: flex; align-items: center; gap: 12px; }
+.live-dot { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text2); }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); animation: pulse 2s infinite; }
+@keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.5;transform:scale(.8)} }
+#last-update { font-size: 11px; color: var(--text3); }
+.header-btn {
+  font-family: 'Noto Sans KR', sans-serif; font-size: 12px;
+  background: transparent; color: var(--text2);
+  border: 1px solid var(--border2); border-radius: 6px;
+  padding: 5px 12px; cursor: pointer; transition: all .15s;
+}
+.header-btn:hover { background: var(--bg3); color: var(--text); }
+.header-btn.primary { color: var(--blue); border-color: var(--blue); }
+.header-btn.primary:hover { background: var(--blue-dim); }
+
+/* ── ALERT BANNER ── */
+#alert-banner {
+  padding: 0 24px;
+  overflow: hidden;
+  max-height: 0;
+  transition: max-height .3s ease, padding .3s ease;
+}
+#alert-banner.visible { max-height: 80px; padding: 10px 24px; }
+.banner-inner {
+  display: flex; align-items: center; gap: 14px;
+  border-radius: 8px; padding: 12px 18px;
+}
+.banner-label { font-size: 15px; font-weight: 700; }
+.banner-desc { font-size: 13px; opacity: .85; margin-top: 1px; }
+.blink-dot { width: 9px; height: 9px; border-radius: 50%; animation: pulse 1s infinite; margin-left: auto; flex-shrink: 0; }
+
+/* ── MAIN GRID ── */
+main { padding: 16px 24px 24px; display: flex; flex-direction: column; gap: 14px; }
+
+/* ── STAGE BAR ── */
+.stage-bar { display: grid; grid-template-columns: repeat(4,1fr); gap: 8px; }
+.stage-item {
+  border-radius: 8px; padding: 12px 14px;
+  border: 1px solid var(--border);
+  background: var(--bg2);
+  transition: all .2s;
+  position: relative; overflow: hidden;
+}
+.stage-item::before {
+  content: ''; position: absolute; inset: 0;
+  opacity: 0; transition: opacity .2s;
+}
+.stage-item.active { border-color: currentColor; }
+.stage-item.active::before { opacity: .08; background: currentColor; }
+.stage-num { font-size: 10px; font-weight: 500; letter-spacing: .5px; opacity: .7; margin-bottom: 4px; }
+.stage-temp { font-family: 'Bebas Neue', sans-serif; font-size: 22px; letter-spacing: .5px; }
+.stage-title { font-size: 12px; font-weight: 700; margin-top: 3px; }
+.stage-action { font-size: 11px; opacity: .65; margin-top: 2px; }
+.s1 { color: var(--blue); }
+.s2 { color: var(--amber); }
+.s3 { color: var(--orange); }
+.s4 { color: var(--red); }
+
+/* ── METRICS (유동형 그리드) ── */
+.metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }
+
+/* ── TIMELINE (모바일 스크롤) ── */
+.timeline { 
+  display: flex; gap: 5px; align-items: flex-end; height: 72px;
+  overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch;
+  scroll-snap-type: x mandatory; padding-bottom: 2px;
+}
+.tl-col { flex: 0 0 52px; scroll-snap-align: start; }
+.metric-card {
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 10px; padding: 14px 16px;
+}
+.metric-label { font-size: 11px; color: var(--text3); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px; }
+.metric-value { font-family: 'Bebas Neue', sans-serif; font-size: 38px; line-height: 1; letter-spacing: .5px; }
+.metric-unit { font-size: 16px; margin-left: 2px; }
+.metric-sub { font-size: 11px; color: var(--text3); margin-top: 5px; }
+
+/* ── TWO COL ── */
+.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.card { background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; }
+.card-title { font-size: 11px; color: var(--text3); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 12px; }
+
+/* ── TIMELINE ── */
+.timeline { display: flex; gap: 5px; align-items: flex-end; height: 72px; }
+.tl-col { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px; }
+.tl-bar-wrap { flex: 1; display: flex; align-items: flex-end; width: 100%; }
+.tl-bar { width: 100%; border-radius: 2px 2px 0 0; min-height: 3px; transition: height .4s; }
+.tl-val { font-size: 10px; color: var(--text2); font-weight: 500; }
+.tl-hour { font-size: 9px; color: var(--text3); }
+
+/* ── ACTION LIST ── */
+.action-list { list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.action-item {
+  display: flex; align-items: flex-start; gap: 8px;
+  font-size: 13px; color: var(--text);
+  padding: 8px 10px; border-radius: 6px;
+  background: var(--bg3);
+}
+.action-dot { width: 6px; height: 6px; border-radius: 50%; margin-top: 4px; flex-shrink: 0; }
+
+/* ── PROGRESS ── */
+.progress-rows { display: flex; flex-direction: column; gap: 12px; }
+.progress-row {}
+.progress-header { display: flex; justify-content: space-between; font-size: 12px; color: var(--text2); margin-bottom: 5px; }
+.progress-track { height: 6px; background: var(--bg3); border-radius: 3px; overflow: hidden; }
+.progress-fill { height: 100%; border-radius: 3px; transition: width .5s cubic-bezier(.4,0,.2,1); }
+
+/* ── LOG ── */
+.log-list { display: flex; flex-direction: column; gap: 0; }
+.log-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 0; border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+.log-row:last-child { border-bottom: none; }
+.log-time { color: var(--text3); min-width: 38px; font-variant-numeric: tabular-nums; }
+.log-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.log-type { font-weight: 500; color: var(--text); }
+.log-memo { color: var(--text2); flex: 1; }
+
+/* ── BODY TEMP ── */
+.bodytemp-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.bt-card { border-radius: 8px; padding: 12px 14px; }
+.bt-card.warn { background: rgba(245,158,11,.12); border: 1px solid rgba(245,158,11,.3); }
+.bt-card.danger { background: rgba(239,68,68,.12); border: 1px solid rgba(239,68,68,.3); }
+.bt-title { font-size: 13px; font-weight: 700; margin-bottom: 4px; }
+.bt-card.warn .bt-title { color: var(--amber); }
+.bt-card.danger .bt-title { color: var(--red); }
+.bt-desc { font-size: 11px; line-height: 1.6; }
+.bt-card.warn .bt-desc { color: rgba(245,158,11,.75); }
+.bt-card.danger .bt-desc { color: rgba(239,68,68,.75); }
+
+/* ── INPUT BTN ── */
+.input-btn {
+  width: 100%; margin-top: 12px; padding: 9px;
+  font-family: 'Noto Sans KR', sans-serif; font-size: 13px; font-weight: 500;
+  border-radius: 7px; border: 1px solid var(--border2);
+  background: var(--bg3); color: var(--text2);
+  cursor: pointer; transition: all .15s;
+}
+.input-btn:hover { background: var(--bg2); color: var(--text); border-color: var(--blue); }
+.input-btn.accent { border-color: var(--blue); color: var(--blue); }
+
+/* ── FOOTER ── */
+footer {
+  text-align: center; padding: 10px;
+  font-size: 11px; color: var(--text3);
+  border-top: 1px solid var(--border);
+}
+
+/* ── MODAL ── */
+.modal-overlay {
+  display: none; position: fixed; inset: 0;
+  background: rgba(0,0,0,.7); z-index: 200;
+  align-items: center; justify-content: center;
+}
+.modal-overlay.open { display: flex; }
+.modal {
+  background: var(--bg2); border: 1px solid var(--border2);
+  border-radius: 12px; padding: 22px;
+  width: 340px; max-width: 95vw;
+}
+.modal-title { font-size: 15px; font-weight: 700; margin-bottom: 16px; }
+.form-label { font-size: 12px; color: var(--text2); margin-bottom: 5px; }
+.form-input {
+  width: 100%; background: var(--bg3); border: 1px solid var(--border2);
+  border-radius: 7px; color: var(--text);
+  font-family: 'Noto Sans KR', sans-serif; font-size: 13px;
+  padding: 9px 12px; margin-bottom: 12px; outline: none;
+  transition: border-color .15s;
+}
+.form-input:focus { border-color: var(--blue); }
+.form-select {
+  width: 100%; background: var(--bg3); border: 1px solid var(--border2);
+  border-radius: 7px; color: var(--text);
+  font-family: 'Noto Sans KR', sans-serif; font-size: 13px;
+  padding: 9px 12px; margin-bottom: 12px; outline: none; cursor: pointer;
+}
+.modal-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 4px; }
+.btn-cancel {
+  padding: 9px; border-radius: 7px; border: 1px solid var(--border2);
+  background: transparent; color: var(--text2);
+  font-family: 'Noto Sans KR', sans-serif; font-size: 13px; cursor: pointer;
+}
+.btn-save {
+  padding: 9px; border-radius: 7px; border: 1px solid var(--blue);
+  background: var(--blue-dim); color: var(--blue);
+  font-family: 'Noto Sans KR', sans-serif; font-size: 13px; font-weight: 700; cursor: pointer;
+}
+.btn-save:hover { background: var(--blue); color: #fff; }
+.saving-indicator { text-align: center; font-size: 12px; color: var(--text3); margin-top: 8px; }
+
+/* ── CONFIG MODAL ── */
+.config-field { margin-bottom: 12px; }
+.config-hint { font-size: 11px; color: var(--text3); margin-top: 3px; line-height: 1.5; }
+
+/* ── RESPONSIVE ── */
+/* 모바일 최적화 (768px 이하) */
+@media (max-width: 768px) {
+  header { padding: 0 14px; height: 48px; }
+  .header-left { gap: 8px; }
+  .site-badge { font-size: 9px; padding: 2px 6px; }
+  .site-name { font-size: 13px; }
+  .header-right { gap: 8px; }
+  .live-dot { font-size: 11px; }
+  #last-update { font-size: 10px; }
+  .header-btn { font-size: 11px; padding: 4px 10px; border-radius: 4px; }
+  
+  main { padding: 12px 14px 16px; gap: 12px; }
+  
+  .metrics { grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; }
+  .metric-card { padding: 12px 12px; border-radius: 8px; }
+  .metric-label { font-size: 10px; margin-bottom: 4px; }
+  .metric-value { font-size: 28px; }
+  .metric-unit { font-size: 14px; }
+  .metric-sub { font-size: 10px; margin-top: 3px; }
+  
+  .stage-bar { gap: 6px; }
+  .stage-item { padding: 10px 12px; }
+  .stage-num { font-size: 9px; margin-bottom: 2px; }
+  .stage-temp { font-size: 18px; }
+  .stage-title { font-size: 11px; margin-top: 2px; }
+  .stage-action { font-size: 10px; margin-top: 1px; }
+  
+  .two-col { grid-template-columns: 1fr; gap: 12px; }
+  .card { padding: 14px 14px; border-radius: 8px; }
+  .card-title { font-size: 10px; margin-bottom: 10px; }
+  
+  .timeline { height: 64px; }
+  .tl-col { flex: 0 0 48px; }
+  .tl-val { font-size: 9px; }
+  .tl-hour { font-size: 8px; }
+  
+  .action-item { font-size: 12px; padding: 7px 8px; gap: 6px; }
+  .action-dot { width: 5px; height: 5px; }
+  
+  .progress-header { font-size: 11px; }
+  .progress-track { height: 5px; }
+  .progress-rows { gap: 10px; }
+  
+  .bodytemp-grid { grid-template-columns: 1fr; }
+  .bt-card { padding: 10px 12px; }
+  .bt-title { font-size: 12px; margin-bottom: 3px; }
+  .bt-desc { font-size: 10px; }
+  
+  .log-row { font-size: 11px; padding: 6px 0; }
+  .log-time { font-size: 10px; }
+  
+  .modal { width: 90vw; padding: 16px; }
+  .modal-title { font-size: 14px; margin-bottom: 12px; }
+  .form-label { font-size: 11px; }
+  .form-input, .form-select { font-size: 13px; padding: 8px 10px; margin-bottom: 10px; }
+  
+  .input-btn { padding: 8px; font-size: 12px; margin-top: 10px; }
+  .btn-cancel, .btn-save { padding: 8px; font-size: 12px; }
+  
+  footer { font-size: 10px; padding: 8px; }
+}
+
+/* 아주 작은 화면 (480px 이하) */
+@media (max-width: 480px) {
+  .site-name { display: none; }
+  .header-btn { font-size: 10px; padding: 3px 8px; }
+  
+  .metrics { grid-template-columns: repeat(2, 1fr); }
+  .stage-bar { grid-template-columns: repeat(2, 1fr); }
+  
+  .metric-value { font-size: 24px; }
+  .stage-temp { font-size: 16px; }
+  
+  .modal { width: 95vw; padding: 14px; }
+}
+
+/* 태블릿 (769px ~ 1024px) */
+@media (min-width: 769px) and (max-width: 1024px) {
+  .metrics { grid-template-columns: repeat(3, 1fr); }
+  .stage-bar { grid-template-columns: repeat(4, 1fr); }
+  .two-col { grid-template-columns: 1fr 1fr; }
+}
+
+/* 데스크톱 (1025px 이상) */
+@media (min-width: 1025px) {
+  .metrics { grid-template-columns: repeat(4, 1fr); }
+  main { max-width: 1400px; margin: 0 auto; }
+}
+</style>
+</head>
+<body>
+<div class="layout">
+
+<header>
+  <div class="header-left">
+    <div class="site-badge">GS E&amp;C</div>
+    <div class="site-name">성동자이리버뷰 · 온열질환 예방</div>
+  </div>
+  <div class="header-right">
+    <div class="live-dot"><div class="dot"></div><span>실시간</span></div>
+    <span id="last-update">—</span>
+    <button class="header-btn" onclick="refreshData()">↻ 새로고침</button>
+    <button class="header-btn primary" onclick="openConfig()">⚙ 설정</button>
+  </div>
+</header>
+
+<div id="alert-banner">
+  <div class="banner-inner" id="banner-inner">
+    <div>
+      <div class="banner-label" id="banner-title">—</div>
+      <div class="banner-desc" id="banner-desc">—</div>
+    </div>
+    <div class="blink-dot" id="banner-dot"></div>
+  </div>
+</div>
+
+<main>
+
+  <!-- 단계 바 -->
+  <div class="stage-bar">
+    <div class="stage-item s1" id="stage-1">
+      <div class="stage-num">1단계</div>
+      <div class="stage-temp">31°C 이상</div>
+      <div class="stage-title">주의</div>
+      <div class="stage-action">10분/시간 강제휴식</div>
+    </div>
+    <div class="stage-item s2" id="stage-2">
+      <div class="stage-num">2단계</div>
+      <div class="stage-temp">33°C 이상</div>
+      <div class="stage-title">경고</div>
+      <div class="stage-action">옥외 14시 이전 종료</div>
+    </div>
+    <div class="stage-item s3" id="stage-3">
+      <div class="stage-num">3단계</div>
+      <div class="stage-temp">35°C 이상</div>
+      <div class="stage-title">옥외 작업 중지</div>
+      <div class="stage-action">15분/시간 강제휴식</div>
+    </div>
+    <div class="stage-item s4" id="stage-4">
+      <div class="stage-num">4단계</div>
+      <div class="stage-temp">38°C 이상</div>
+      <div class="stage-title">전면 작업 중지</div>
+      <div class="stage-action">즉시 대피</div>
+    </div>
+  </div>
+
+  <!-- 수치 카드 -->
+  <div class="metrics">
+    <div class="metric-card">
+      <div class="metric-label">체감온도 (현재)</div>
+      <div class="metric-value" id="m-feels" style="color:var(--text)">—<span class="metric-unit" style="font-family:'Noto Sans KR'">°C</span></div>
+      <div class="metric-sub" id="m-feels-sub">열지수 산출값</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">기온 / 습도</div>
+      <div class="metric-value" id="m-th" style="font-size:26px;color:var(--text)">— / —</div>
+      <div class="metric-sub" id="m-loc">기상청 단기예보</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">현재 단계</div>
+      <div class="metric-value" id="m-stage" style="font-size:22px;color:var(--text)">—</div>
+      <div class="metric-sub" id="m-stage-desc">—</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">오늘 예상 최고 체감온도</div>
+      <div class="metric-value" id="m-max" style="color:var(--text)">—<span class="metric-unit" style="font-family:'Noto Sans KR'">°C</span></div>
+      <div class="metric-sub">기상청 예보 기준</div>
+    </div>
+  </div>
+
+  <!-- 시간대별 + 조치사항 -->
+  <div class="two-col">
+    <div class="card">
+      <div class="card-title">시간대별 체감온도 예측</div>
+      <div class="timeline" id="timeline"></div>
+    </div>
+    <div class="card">
+      <div class="card-title">현재 단계 조치사항</div>
+      <ul class="action-list" id="action-list">
+        <li class="action-item"><div class="action-dot" style="background:var(--text3)"></div>데이터 로딩 중…</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- 현황 집계 + 이행 기록 -->
+  <div class="two-col">
+    <div class="card">
+      <div class="card-title">금일 현황 집계</div>
+      <div class="progress-rows">
+        <div class="progress-row">
+          <div class="progress-header"><span>오전 9시 체온 측정</span><span id="p1-label">0/0명</span></div>
+          <div class="progress-track"><div class="progress-fill" id="p1-fill" style="width:0%;background:var(--blue)"></div></div>
+        </div>
+        <div class="progress-row">
+          <div class="progress-header"><span>오후 2시 체온 측정</span><span id="p2-label">0/0명</span></div>
+          <div class="progress-track"><div class="progress-fill" id="p2-fill" style="width:0%;background:var(--blue)"></div></div>
+        </div>
+        <div class="progress-row">
+          <div class="progress-header"><span>온습도계 설치 확인</span><span id="p3-label">0/0개소</span></div>
+          <div class="progress-track"><div class="progress-fill" id="p3-fill" style="width:0%;background:var(--green)"></div></div>
+        </div>
+      </div>
+      <button class="input-btn accent" onclick="openRecord()">+ 현황 입력</button>
+    </div>
+    <div class="card">
+      <div class="card-title">오늘 이행 기록</div>
+      <div id="log-list"><div style="font-size:12px;color:var(--text3);padding:6px 0">기록이 없습니다.</div></div>
+      <button class="input-btn" onclick="openLog()">+ 이행 기록 추가</button>
+    </div>
+  </div>
+
+  <!-- 체온 기준 -->
+  <div class="card">
+    <div class="card-title">체온 이상자 대응 기준</div>
+    <div class="bodytemp-grid">
+      <div class="bt-card warn">
+        <div class="bt-title">⚠ 체온 37.5°C 이상</div>
+        <div class="bt-desc">근로자 면담 실시 후 병원 이동 안내<br>인적사항 · 체온 · 측정시간 · 조치사항 기록관리</div>
+      </div>
+      <div class="bt-card danger">
+        <div class="bt-title">🚨 체온 39°C 이상</div>
+        <div class="bt-desc">즉시 119 신고 · 병원 후송 조치<br>맥박 · 호흡 없는 경우 CPR 즉시 실시</div>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<footer>
+  데이터 출처: 기상청 오픈API (단기예보) · 기록 저장: GitHub Gist · GS E&amp;C 2026 온열질환 예방대책 기준 적용
+</footer>
+</div>
+
+<!-- 현황 입력 모달 -->
+<div class="modal-overlay" id="modal-record">
+  <div class="modal">
+    <div class="modal-title">현황 입력</div>
+    <div class="form-label">총 근로자 수</div>
+    <input class="form-input" type="number" id="r-total" value="50">
+    <div class="form-label">오전 9시 체온 측정 완료 인원</div>
+    <input class="form-input" type="number" id="r-am" value="0">
+    <div class="form-label">오후 2시 체온 측정 완료 인원</div>
+    <input class="form-input" type="number" id="r-pm" value="0">
+    <div class="form-label">온습도계 설치 완료 / 목표 개소</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <input class="form-input" type="number" id="r-hd" value="0" style="margin-bottom:0">
+      <input class="form-input" type="number" id="r-ht" value="5" style="margin-bottom:0">
+    </div>
+    <div class="saving-indicator" id="record-status"></div>
+    <div class="modal-actions" style="margin-top:16px">
+      <button class="btn-cancel" onclick="closeRecord()">취소</button>
+      <button class="btn-save" onclick="saveRecord()">저장</button>
+    </div>
+  </div>
+</div>
+
+<!-- 이행 기록 모달 -->
+<div class="modal-overlay" id="modal-log">
+  <div class="modal">
+    <div class="modal-title">이행 기록 추가</div>
+    <div class="form-label">조치 유형</div>
+    <select class="form-select" id="l-type">
+      <option>강제휴식 실시</option>
+      <option>옥외작업 중지</option>
+      <option>전면작업 중지</option>
+      <option>체온 측정 완료</option>
+      <option>이상자 면담/조치</option>
+      <option>보냉장구 지급</option>
+      <option>온습도계 설치 확인</option>
+      <option>기타</option>
+    </select>
+    <div class="form-label">상세 내용 (선택)</div>
+    <input class="form-input" type="text" id="l-memo" placeholder="예: 3공구 전체 15분 휴식 실시">
+    <div class="saving-indicator" id="log-status"></div>
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeLog()">취소</button>
+      <button class="btn-save" onclick="saveLog()">저장</button>
+    </div>
+  </div>
+</div>
+
+<!-- 설정 모달 -->
+<div class="modal-overlay" id="modal-config">
+  <div class="modal">
+    <div class="modal-title">⚙ 설정</div>
+    <div class="config-field">
+      <div class="form-label">기상청 API 서비스 키</div>
+      <input class="form-input" type="text" id="cfg-api" placeholder="공공데이터포털 발급 키">
+      <div class="config-hint">공공데이터포털(data.go.kr) → 기상청_단기예보 조회서비스 → 일반 인증키(Decoded)</div>
+    </div>
+    <div class="config-field">
+      <div class="form-label">현장 격자 X (nx)</div>
+      <input class="form-input" type="text" id="cfg-nx" placeholder="예: 60">
+      <div class="config-hint">기상청 격자변환 페이지에서 주소로 조회</div>
+    </div>
+    <div class="config-field">
+      <div class="form-label">현장 격자 Y (ny)</div>
+      <input class="form-input" type="text" id="cfg-ny" placeholder="예: 127">
+    </div>
+    <div class="config-field">
+      <div class="form-label">GitHub Personal Access Token</div>
+      <input class="form-input" type="password" id="cfg-gh-token" placeholder="ghp_xxxxxxxxxxxxxxxx">
+      <div class="config-hint">GitHub → Settings → Developer settings → Personal access tokens → gist 권한 체크</div>
+    </div>
+    <div class="config-field">
+      <div class="form-label">GitHub Gist ID</div>
+      <input class="form-input" type="text" id="cfg-gist-id" placeholder="최초 저장 시 자동 생성됩니다">
+      <div class="config-hint">처음엔 비워두세요. 첫 저장 후 자동으로 입력됩니다.</div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeConfig()">취소</button>
+      <button class="btn-save" onclick="saveConfig()">저장</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── CONFIG (localStorage) ──────────────────────────────────
+const CFG_KEY = 'sdxrv_config';
+let cfg = JSON.parse(localStorage.getItem(CFG_KEY) || '{}');
+cfg = Object.assign({ apiKey:'', nx:'60', ny:'127', ghToken:'', gistId:'' }, cfg);
+
+function saveConfig() {
+  cfg.apiKey = document.getElementById('cfg-api').value.trim();
+  cfg.nx = document.getElementById('cfg-nx').value.trim() || '60';
+  cfg.ny = document.getElementById('cfg-ny').value.trim() || '127';
+  cfg.ghToken = document.getElementById('cfg-gh-token').value.trim();
+  cfg.gistId = document.getElementById('cfg-gist-id').value.trim();
+  localStorage.setItem(CFG_KEY, JSON.stringify(cfg));
+  closeConfig();
+  refreshData();
+}
+function openConfig() {
+  document.getElementById('cfg-api').value = cfg.apiKey;
+  document.getElementById('cfg-nx').value = cfg.nx;
+  document.getElementById('cfg-ny').value = cfg.ny;
+  document.getElementById('cfg-gh-token').value = cfg.ghToken;
+  document.getElementById('cfg-gist-id').value = cfg.gistId;
+  document.getElementById('modal-config').classList.add('open');
+}
+function closeConfig() { document.getElementById('modal-config').classList.remove('open'); }
+
+// ── STATE ──────────────────────────────────────────────────
+const STATE = {
+  feelsLike: null, temp: null, humid: null,
+  maxFeels: null, stage: 0, forecast: [],
+  record: { total:50, am:0, pm:0, humDone:0, humTotal:5 },
+  logs: []
+};
+
+const STAGE_COLORS = ['#22c55e','#3b82f6','#f59e0b','#f97316','#ef4444'];
+const STAGE_INFO = [
+  { label:'정상', desc:'일반 작업 가능', actions:['온·습도 및 체감온도 매일 기록','냉방·통풍장치 점검','그늘막 설치 확인'] },
+  { label:'1단계 주의', desc:'31°C 이상 · 10분/시간 강제휴식', actions:['시간당 10분 이상 강제휴식 실시','체감온도·조치사항 매일 기록','에어컨·선풍기·그늘막 설치 확인'] },
+  { label:'2단계 경고', desc:'33°C 이상 · 옥외 14시 이전 종료', actions:['개인용 보냉장구 지급 (타설공 필수)','옥외 작업 14시 이전 전면 종료','연속작업 교대 인원 투입'] },
+  { label:'3단계 위험', desc:'35°C 이상 · 옥외 작업 중지', actions:['옥외 작업 즉시 전면 중지','시간당 15분 이상 강제휴식','작업자 건강상태 집중 체크'] },
+  { label:'4단계 전면중지', desc:'38°C 이상 · 즉시 전면 작업 중지', actions:['모든 작업 즉시 중지','전 근로자 즉시 대피 유도','관리자 즉시 보고'] }
+];
+
+// ── HEAT INDEX ─────────────────────────────────────────────
+function heatIndex(t, rh) {
+  if (t < 27) return Math.round(t * 10) / 10;
+  const hi = -8.78469475556 + 1.61139411*t + 2.33854883889*rh
+    - 0.14611605*t*rh - 0.012308094*t*t
+    - 0.0164248277778*rh*rh + 0.002211732*t*t*rh
+    + 0.00072546*t*rh*rh - 0.000003582*t*t*rh*rh;
+  return Math.round(hi * 10) / 10;
+}
+function getStage(fl) {
+  if (fl >= 38) return 4;
+  if (fl >= 35) return 3;
+  if (fl >= 33) return 2;
+  if (fl >= 31) return 1;
+  return 0;
+}
+
+// ── WEATHER API ────────────────────────────────────────────
+async function fetchWeather() {
+  if (!cfg.apiKey) { useDemoData(); renderAll(); return; }
+  const now = new Date();
+  const pad = n => String(n).padStart(2,'0');
+  const base_date = now.getFullYear() + pad(now.getMonth()+1) + pad(now.getDate());
+  const h = now.getHours();
+  const slots = [2,5,8,11,14,17,20,23];
+  let bh = 2;
+  for (const s of slots) { if (h >= s) bh = s; }
+  const base_time = pad(bh) + '00';
+  const url = `https://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getVilageFcst?serviceKey=${encodeURIComponent(cfg.apiKey)}&numOfRows=400&pageNo=1&dataType=JSON&base_date=${base_date}&base_time=${base_time}&nx=${cfg.nx}&ny=${cfg.ny}`;
+  try {
+    const res = await fetch(url);
+    const data = await res.json();
+    const items = data.response.body.items.item;
+    const T = {}, RH = {};
+    items.forEach(i => {
+      const k = i.fcstDate + i.fcstTime;
+      if (i.category === 'TMP') T[k] = parseFloat(i.fcstValue);
+      if (i.category === 'REH') RH[k] = parseFloat(i.fcstValue);
+    });
+    const todayKeys = Object.keys(T).filter(k => k.startsWith(base_date)).sort();
+    let maxFl = -99;
+    const fc = [];
+    todayKeys.forEach(k => {
+      const t = T[k], rh = RH[k];
+      if (t === undefined || rh === undefined) return;
+      const fl = heatIndex(t, rh);
+      if (fl > maxFl) maxFl = fl;
+      const hh = parseInt(k.slice(8,10));
+      if (hh >= 6 && hh <= 20) fc.push({ hour: hh, fl });
+    });
+    STATE.forecast = fc.slice(0, 9);
+    STATE.maxFeels = maxFl;
+    const nowKey = base_date + pad(h) + '00';
+    const closest = todayKeys.reduce((a, b) =>
+      Math.abs(parseInt(b) - parseInt(nowKey)) < Math.abs(parseInt(a) - parseInt(nowKey)) ? b : a,
+      todayKeys[0]
+    );
+    STATE.temp = T[closest];
+    STATE.humid = RH[closest];
+    STATE.feelsLike = heatIndex(STATE.temp, STATE.humid);
+    STATE.stage = getStage(STATE.feelsLike);
+  } catch(e) {
+    useDemoData();
+  }
+  renderAll();
+  document.getElementById('last-update').textContent =
+    new Date().toLocaleTimeString('ko-KR', {hour:'2-digit', minute:'2-digit'}) + ' 갱신';
+}
+
+function useDemoData() {
+  STATE.temp = 34; STATE.humid = 71;
+  STATE.feelsLike = heatIndex(34, 71);
+  STATE.stage = getStage(STATE.feelsLike);
+  STATE.maxFeels = heatIndex(36, 74);
+  STATE.forecast = [
+    {hour:7, fl:heatIndex(28,65)},{hour:8, fl:heatIndex(30,67)},
+    {hour:9, fl:heatIndex(31,68)},{hour:10, fl:heatIndex(32,69)},
+    {hour:11, fl:heatIndex(33,70)},{hour:12, fl:heatIndex(34,71)},
+    {hour:13, fl:heatIndex(35,72)},{hour:14, fl:heatIndex(36,74)},
+    {hour:15, fl:heatIndex(34,73)}
+  ];
+  document.getElementById('last-update').textContent = '데모 모드';
+}
+
+// ── RENDER ─────────────────────────────────────────────────
+function renderAll() {
+  const s = STATE.stage;
+  const info = STAGE_INFO[s];
+  const color = STAGE_COLORS[s];
+
+  // 수치
+  if (STATE.feelsLike !== null) {
+    document.getElementById('m-feels').innerHTML =
+      `<span style="color:${color}">${STATE.feelsLike}</span><span class="metric-unit" style="font-family:'Noto Sans KR';color:${color}">°C</span>`;
+    document.getElementById('m-feels-sub').textContent = '열지수(Heat Index) 산출값';
+  }
+  if (STATE.temp !== null) {
+    document.getElementById('m-th').innerHTML =
+      `<span style="font-size:26px">${STATE.temp}°</span><span style="font-size:16px;color:var(--text3)"> / ${STATE.humid}%</span>`;
+  }
+  document.getElementById('m-stage').innerHTML = `<span style="color:${color}">${info.label}</span>`;
+  document.getElementById('m-stage-desc').textContent = info.desc;
+  if (STATE.maxFeels !== null) {
+    const mc = STAGE_COLORS[getStage(STATE.maxFeels)];
+    document.getElementById('m-max').innerHTML =
+      `<span style="color:${mc}">${STATE.maxFeels}</span><span class="metric-unit" style="font-family:'Noto Sans KR';color:${mc}">°C</span>`;
+  }
+
+  // 단계 하이라이트
+  for (let i = 1; i <= 4; i++) {
+    const el = document.getElementById(`stage-${i}`);
+    el.classList.toggle('active', i === s);
+    el.style.opacity = i < s ? '0.4' : '1';
+  }
+
+  // 알림 배너
+  const banner = document.getElementById('alert-banner');
+  if (s > 0) {
+    banner.classList.add('visible');
+    const bgMap = ['','rgba(59,130,246,.15)','rgba(245,158,11,.15)','rgba(249,115,22,.15)','rgba(239,68,68,.2)'];
+    const bdMap = ['','rgba(59,130,246,.4)','rgba(245,158,11,.4)','rgba(249,115,22,.4)','rgba(239,68,68,.5)'];
+    const inner = document.getElementById('banner-inner');
+    inner.style.background = bgMap[s];
+    inner.style.border = `1px solid ${bdMap[s]}`;
+    document.getElementById('banner-title').style.color = color;
+    document.getElementById('banner-title').textContent = `${info.label} 발령 중`;
+    document.getElementById('banner-desc').style.color = color;
+    document.getElementById('banner-desc').textContent = info.desc;
+    document.getElementById('banner-dot').style.background = color;
+  } else {
+    banner.classList.remove('visible');
+  }
+
+  // 조치사항
+  const al = document.getElementById('action-list');
+  al.innerHTML = info.actions.map(a =>
+    `<li class="action-item"><div class="action-dot" style="background:${color}"></div>${a}</li>`
+  ).join('');
+
+  // 타임라인
+  const tl = document.getElementById('timeline');
+  if (STATE.forecast.length) {
+    const maxV = Math.max(...STATE.forecast.map(f=>f.fl), 40);
+    tl.innerHTML = STATE.forecast.map(f => {
+      const pct = Math.round((f.fl / maxV) * 96);
+      const c = STAGE_COLORS[getStage(f.fl)];
+      return `<div class="tl-col">
+        <div class="tl-bar-wrap"><div class="tl-bar" style="height:${pct}%;background:${c}20;border-top:2px solid ${c}"></div></div>
+        <div class="tl-val" style="color:${c}">${f.fl}°</div>
+        <div class="tl-hour">${f.hour}시</div>
+      </div>`;
+    }).join('');
+  }
+
+  // 진행률
+  renderProgress();
+  renderLogs();
+}
+
+function renderProgress() {
+  const r = STATE.record;
+  const p1 = r.total > 0 ? Math.min(100, Math.round(r.am/r.total*100)) : 0;
+  const p2 = r.total > 0 ? Math.min(100, Math.round(r.pm/r.total*100)) : 0;
+  const p3 = r.humTotal > 0 ? Math.min(100, Math.round(r.humDone/r.humTotal*100)) : 0;
+  document.getElementById('p1-label').textContent = `${r.am}/${r.total}명`;
+  document.getElementById('p2-label').textContent = `${r.pm}/${r.total}명`;
+  document.getElementById('p3-label').textContent = `${r.humDone}/${r.humTotal}개소`;
+  document.getElementById('p1-fill').style.width = p1 + '%';
+  document.getElementById('p2-fill').style.width = p2 + '%';
+  document.getElementById('p3-fill').style.width = p3 + '%';
+  const c1 = p1>=100?'var(--green)':p1>=50?'var(--amber)':'var(--blue)';
+  const c2 = p2>=100?'var(--green)':p2>=50?'var(--amber)':'var(--blue)';
+  document.getElementById('p1-fill').style.background = c1;
+  document.getElementById('p2-fill').style.background = c2;
+}
+
+function renderLogs() {
+  const el = document.getElementById('log-list');
+  if (!STATE.logs.length) {
+    el.innerHTML = '<div style="font-size:12px;color:var(--text3);padding:6px 0">기록이 없습니다.</div>';
+    return;
+  }
+  el.innerHTML = `<div class="log-list">${
+    STATE.logs.slice(-6).reverse().map(l =>
+      `<div class="log-row">
+        <span class="log-time">${l.time}</span>
+        <div class="log-dot" style="background:${STAGE_COLORS[l.stage]||'#888'}"></div>
+        <span class="log-type">${l.type}</span>
+        ${l.memo ? `<span class="log-memo">— ${l.memo}</span>` : ''}
+      </div>`
+    ).join('')
+  }</div>`;
+}
+
+// ── GIST STORAGE ───────────────────────────────────────────
+function todayKey() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
+async function gistLoad() {
+  if (!cfg.ghToken || !cfg.gistId) return;
+  try {
+    const res = await fetch(`https://api.github.com/gists/${cfg.gistId}`, {
+      headers: { Authorization: `token ${cfg.ghToken}`, Accept: 'application/vnd.github.v3+json' }
+    });
+    const data = await res.json();
+    const key = todayKey();
+    const file = data.files[`sdxrv-${key}.json`];
+    if (file) {
+      const stored = JSON.parse(file.content);
+      if (stored.record) STATE.record = stored.record;
+      if (stored.logs) STATE.logs = stored.logs;
+    }
+  } catch(e) {}
+}
+
+async function gistSave() {
+  if (!cfg.ghToken) return false;
+  const key = todayKey();
+  const filename = `sdxrv-${key}.json`;
+  const content = JSON.stringify({
+    date: key,
+    record: STATE.record,
+    logs: STATE.logs,
+    weather: { feelsLike: STATE.feelsLike, temp: STATE.temp, humid: STATE.humid, stage: STATE.stage },
+    savedAt: new Date().toISOString()
+  }, null, 2);
+  const files = { [filename]: { content } };
+  try {
+    if (cfg.gistId) {
+      await fetch(`https://api.github.com/gists/${cfg.gistId}`, {
+        method: 'PATCH',
+        headers: { Authorization: `token ${cfg.ghToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ files })
+      });
+    } else {
+      const res = await fetch('https://api.github.com/gists', {
+        method: 'POST',
+        headers: { Authorization: `token ${cfg.ghToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ description: '성동자이리버뷰 온열질환 예방 기록', public: false, files })
+      });
+      const data = await res.json();
+      cfg.gistId = data.id;
+      document.getElementById('cfg-gist-id').value = cfg.gistId;
+      localStorage.setItem(CFG_KEY, JSON.stringify(cfg));
+    }
+    return true;
+  } catch(e) { return false; }
+}
+
+// ── MODALS ─────────────────────────────────────────────────
+function openRecord() { document.getElementById('modal-record').classList.add('open'); }
+function closeRecord() { document.getElementById('modal-record').classList.remove('open'); document.getElementById('record-status').textContent = ''; }
+async function saveRecord() {
+  STATE.record.total = parseInt(document.getElementById('r-total').value)||50;
+  STATE.record.am = parseInt(document.getElementById('r-am').value)||0;
+  STATE.record.pm = parseInt(document.getElementById('r-pm').value)||0;
+  STATE.record.humDone = parseInt(document.getElementById('r-hd').value)||0;
+  STATE.record.humTotal = parseInt(document.getElementById('r-ht').value)||5;
+  document.getElementById('record-status').textContent = '저장 중…';
+  const ok = await gistSave();
+  document.getElementById('record-status').textContent = ok ? '✓ 저장 완료' : '로컬 저장됨 (GitHub 토큰 미설정)';
+  setTimeout(closeRecord, 1200);
+  renderProgress();
+}
+
+function openLog() { document.getElementById('modal-log').classList.add('open'); }
+function closeLog() { document.getElementById('modal-log').classList.remove('open'); document.getElementById('log-status').textContent = ''; }
+async function saveLog() {
+  const now = new Date();
+  const t = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+  STATE.logs.push({ time: t, type: document.getElementById('l-type').value, memo: document.getElementById('l-memo').value, stage: STATE.stage });
+  document.getElementById('l-memo').value = '';
+  document.getElementById('log-status').textContent = '저장 중…';
+  const ok = await gistSave();
+  document.getElementById('log-status').textContent = ok ? '✓ 저장 완료' : '로컬 저장됨 (GitHub 토큰 미설정)';
+  setTimeout(closeLog, 1200);
+  renderLogs();
+}
+
+// ── 데이터 변화 감지 ──────────────────────────────────────
+const PREV = { feelsLike: null, stage: null, record: null, logs: null };
+
+function hasDataChanged() {
+  const recordStr = JSON.stringify(STATE.record);
+  const logsStr = JSON.stringify(STATE.logs);
+  return STATE.feelsLike !== PREV.feelsLike ||
+         STATE.stage !== PREV.stage ||
+         recordStr !== PREV.record ||
+         logsStr !== PREV.logs;
+}
+
+function updatePrevState() {
+  PREV.feelsLike = STATE.feelsLike;
+  PREV.stage = STATE.stage;
+  PREV.record = JSON.stringify(STATE.record);
+  PREV.logs = JSON.stringify(STATE.logs);
+}
+
+// ── REFRESH ────────────────────────────────────────────────
+async function refreshData() {
+  const prevStage = STATE.stage;
+  await gistLoad();
+  await fetchWeather();
+  
+  if (hasDataChanged()) {
+    renderAll();
+    updatePrevState();
+    
+    // 단계 변화 시 경고음 (선택사항 - 활성화하면 단계 변할 때 진동)
+    if (STATE.stage > prevStage && STATE.stage > 0) {
+      if (navigator.vibrate) navigator.vibrate([50, 30, 50]);
+    }
+  }
+}
+
+// ── INIT ───────────────────────────────────────────────────
+refreshData();
+updatePrevState();
+// 5분마다 자동 갱신 (실시간 효과)
+setInterval(refreshData, 5 * 60 * 1000);
+</script>
+</body>
+</html>
