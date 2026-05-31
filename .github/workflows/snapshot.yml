@@ -1,15 +1,11 @@
-name: 체감온도 포스터 자동 스냅샷
+name: 당일 체감온도 포스터 (09시·14시)
 
 on:
   schedule:
-    # GitHub Actions는 UTC 기준입니다. 한국시간(KST) = UTC + 9시간
-    # 09:00 KST = 00:00 UTC
-    - cron: '0 0 * * *'
-    # 14:00 KST = 05:00 UTC
-    - cron: '0 5 * * *'
-  workflow_dispatch:   # 수동 실행 버튼 (테스트용)
+    - cron: '0 0 * * *'   # 09:00 KST
+    - cron: '0 5 * * *'   # 14:00 KST
+  workflow_dispatch:
 
-# 생성한 이미지를 저장소에 커밋하기 위한 쓰기 권한
 permissions:
   contents: write
 
@@ -17,34 +13,24 @@ jobs:
   snapshot:
     runs-on: ubuntu-latest
     steps:
-      - name: 저장소 체크아웃
-        uses: actions/checkout@v4
-
-      - name: Node.js 설치
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: '20'
-
       - name: 한글 폰트 설치
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y fonts-nanum
-          sudo fc-cache -fv
-
-      - name: 의존성 설치
-        run: npm install canvas
-
+        run: sudo apt-get update && sudo apt-get install -y fonts-nanum && sudo fc-cache -fv
+      - run: npm install canvas
       - name: 포스터 생성
         env:
           KMA_API_KEY: ${{ secrets.KMA_API_KEY }}
           GRID_NX: '61'
           GRID_NY: '127'
+          POSTER_TYPE: 'daily'
         run: node scripts/generate-poster.js
-
-      - name: 생성된 포스터 커밋
+      - name: 커밋
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add snapshots/
-          git diff --staged --quiet || git commit -m "자동 포스터 스냅샷: $(date -u +'%Y-%m-%d %H:%M UTC')"
+          git diff --staged --quiet || git commit -m "📸 당일 스냅샷: $(TZ=Asia/Seoul date +'%Y-%m-%d %H:%M KST')"
           git push
