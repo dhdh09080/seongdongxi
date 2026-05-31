@@ -1,206 +1,416 @@
-// 성동자이리버뷰 온열질환 예방 포스터 자동 생성 스크립트
-// GitHub Actions에서 매일 09시/14시(KST)에 실행됩니다.
-// 기상청 API → 체감온도 계산 → 포스터(JPG) 생성 → snapshots/ 폴더에 저장
+/**
+ * 성동자이리버뷰 온열질환 예방 포스터 자동 생성
+ * POSTER_TYPE=daily   → 당일 체감온도 스냅샷 (09시/14시)
+ * POSTER_TYPE=forecast → 내일 예보 포스터   (22시)
+ */
 
 const fs = require('fs');
 const path = require('path');
 const { createCanvas, registerFont, loadImage } = require('canvas');
 
-// ── 한글 폰트 등록 ──
-const FONT_CANDIDATES = [
-  '/usr/share/fonts/truetype/nanum/NanumGothic.ttf',
-  '/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf',
-];
+// ── 폰트 등록 ──
 try {
-  registerFont('/usr/share/fonts/truetype/nanum/NanumGothic.ttf', { family: 'Nanum', weight: 'normal' });
-  registerFont('/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf', { family: 'Nanum', weight: 'bold' });
+  registerFont('/usr/share/fonts/truetype/nanum/NanumGothic.ttf',          { family: 'Nanum', weight: 'normal' });
+  registerFont('/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf',      { family: 'Nanum', weight: 'bold' });
   registerFont('/usr/share/fonts/truetype/nanum/NanumGothicExtraBold.ttf', { family: 'Nanum', weight: '900' });
-} catch (e) {
-  console.log('일부 폰트 등록 실패 (계속 진행):', e.message);
-}
+} catch(e) { console.log('폰트 등록 일부 실패(계속):', e.message); }
 
-// ── 설정 (GitHub Secrets / 환경변수) ──
-const API_KEY = process.env.KMA_API_KEY;
-const NX = process.env.GRID_NX || '61';
-const NY = process.env.GRID_NY || '127';
+// ── 환경변수 ──
+const API_KEY    = process.env.KMA_API_KEY;
+const NX         = process.env.GRID_NX || '61';
+const NY         = process.env.GRID_NY || '127';
+const POSTER_TYPE = process.env.POSTER_TYPE || 'daily'; // 'daily' | 'forecast'
 
-if (!API_KEY) {
-  console.error('KMA_API_KEY 환경변수가 없습니다. GitHub Secrets에 등록하세요.');
-  process.exit(1);
-}
+if (!API_KEY) { console.error('KMA_API_KEY 없음'); process.exit(1); }
 
-// ── 폭염안전 5대 기본수칙 (고용노동부) ──
+// ── 공통 상수 ──
+const SC     = ['#22c55e','#3b82f6','#f59e0b','#f97316','#ef4444'];
+const SLABEL = ['정상','1단계 주의','2단계 경고','3단계 위험','4단계 전면중지'];
 const PREVENT5 = [
-  { tag: '물', txt: '시원하고 깨끗한 물 충분히 제공' },
-  { tag: '바람·그늘', txt: '실내외 작업 시 에어컨·선풍기 등 냉방장치 및 그늘막 설치' },
-  { tag: '휴식', txt: '체감온도 33°C 이상 폭염작업 시 매 2시간 이내 20분 이상 휴식' },
-  { tag: '보냉장구', txt: '냉각의류·냉각조끼 등 개인 보냉장구 지급' },
-  { tag: '응급조치', txt: '온열질환 의심자가 의식이 없는 경우 즉시 119 신고' },
+  { tag:'물',       txt:'시원하고 깨끗한 물 충분히 제공' },
+  { tag:'바람·그늘', txt:'실내외 작업 시 에어컨·선풍기 등 냉방장치 및 그늘막 설치' },
+  { tag:'휴식',     txt:'체감온도 33°C 이상 폭염작업 시 매 2시간 이내 20분 이상 휴식' },
+  { tag:'보냉장구', txt:'냉각의류·냉각조끼 등 개인 보냉장구 지급' },
+  { tag:'응급조치', txt:'온열질환 의심자가 의식이 없는 경우 즉시 119 신고' },
 ];
 
-const SC = ['#22c55e', '#3b82f6', '#f59e0b', '#f97316', '#ef4444'];
-const SLABEL = ['정상', '1단계 주의', '2단계 경고', '3단계 위험', '4단계 전면중지'];
+const pad  = n => String(n).padStart(2,'0');
+const kNow = () => new Date(Date.now() + 9*3600*1000); // KST
 
 function heatIndex(t, rh) {
-  if (t < 27) return Math.round(t * 10) / 10;
-  const hi = -8.78469475556 + 1.61139411 * t + 2.33854883889 * rh
-    - 0.14611605 * t * rh - 0.012308094 * t * t
-    - 0.0164248277778 * rh * rh + 0.002211732 * t * t * rh
-    + 0.00072546 * t * rh * rh - 0.000003582 * t * t * rh * rh;
-  return Math.round(hi * 10) / 10;
+  if (t < 27) return Math.round(t*10)/10;
+  const hi = -8.78469475556 + 1.61139411*t + 2.33854883889*rh
+    - 0.14611605*t*rh - 0.012308094*t*t - 0.0164248277778*rh*rh
+    + 0.002211732*t*t*rh + 0.00072546*t*rh*rh - 0.000003582*t*t*rh*rh;
+  return Math.round(hi*10)/10;
 }
 function getStage(fl) {
-  if (fl >= 38) return 4;
-  if (fl >= 35) return 3;
-  if (fl >= 33) return 2;
-  if (fl >= 31) return 1;
-  return 0;
+  if (fl>=38) return 4; if (fl>=35) return 3;
+  if (fl>=33) return 2; if (fl>=31) return 1; return 0;
+}
+function fmtDate(d) {
+  return `${d.getUTCFullYear()}.${pad(d.getUTCMonth()+1)}.${pad(d.getUTCDate())}`;
+}
+function dateKey(d) {
+  return `${d.getUTCFullYear()}${pad(d.getUTCMonth()+1)}${pad(d.getUTCDate())}`;
 }
 
-async function fetchWeather() {
-  const now = new Date(Date.now() + 9 * 3600 * 1000); // KST
-  const pad = n => String(n).padStart(2, '0');
-  const bd = now.getUTCFullYear() + pad(now.getUTCMonth() + 1) + pad(now.getUTCDate());
-  const h = now.getUTCHours();
-  const slots = [2, 5, 8, 11, 14, 17, 20, 23];
-  let bh = 2;
-  for (const s of slots) if (h >= s) bh = s;
-  const bt = pad(bh) + '00';
-
-  const url = `https://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getVilageFcst?serviceKey=${encodeURIComponent(API_KEY)}&numOfRows=400&pageNo=1&dataType=JSON&base_date=${bd}&base_time=${bt}&nx=${NX}&ny=${NY}`;
-
-  const res = await fetch(url);
-  const data = await res.json();
-  const items = data.response.body.items.item;
-  const T = {}, RH = {};
-  items.forEach(i => {
-    const k = i.fcstDate + i.fcstTime;
-    if (i.category === 'TMP') T[k] = parseFloat(i.fcstValue);
-    if (i.category === 'REH') RH[k] = parseFloat(i.fcstValue);
-  });
-  const tk = Object.keys(T).filter(k => k.startsWith(bd)).sort();
-  const nk = bd + pad(h) + '00';
-  const cl = tk.reduce((a, b) =>
-    Math.abs(parseInt(b) - parseInt(nk)) < Math.abs(parseInt(a) - parseInt(nk)) ? b : a, tk[0]);
-  const temp = T[cl], humid = RH[cl];
-  return { temp, humid, feelsLike: heatIndex(temp, humid) };
-}
-
+// ── canvas 헬퍼 ──
 function roundRect(ctx, x, y, w, h, r) {
   ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.arcTo(x + w, y, x + w, y + h, r);
-  ctx.arcTo(x + w, y + h, x, y + h, r);
-  ctx.arcTo(x, y + h, x, y, r);
-  ctx.arcTo(x, y, x + w, y, r);
-  ctx.closePath();
+  ctx.moveTo(x+r, y); ctx.arcTo(x+w,y,x+w,y+h,r);
+  ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r);
+  ctx.arcTo(x,y,x+w,y,r); ctx.closePath();
 }
 
-async function drawPoster(weather) {
-  const W = 800, H = 1131;
+// ── 기상청 단기예보 API ──
+async function fetchForecast(targetDateStr, baseTime) {
+  const url = `https://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getVilageFcst`
+    + `?serviceKey=${encodeURIComponent(API_KEY)}&numOfRows=500&pageNo=1&dataType=JSON`
+    + `&base_date=${targetDateStr}&base_time=${baseTime}&nx=${NX}&ny=${NY}`;
+  const res = await fetch(url);
+  const data = await res.json();
+  return data.response.body.items.item;
+}
+
+// ── 기상청 폭염특보 API ──
+async function fetchHeatAlert() {
+  try {
+    const url = `https://apis.data.go.kr/1360000/WthrWrnInfoService/getWthrWrnList`
+      + `?serviceKey=${encodeURIComponent(API_KEY)}&pageNo=1&numOfRows=100&dataType=JSON`;
+    const res = await fetch(url);
+    const data = await res.json();
+    const items = data?.response?.body?.items?.item || [];
+    const list = Array.isArray(items) ? items : [items];
+    // 서울 관련 폭염 특보 필터링
+    const seoulHeat = list.filter(i => {
+      const content = (i.CONTENT||'') + (i.TITLE||'');
+      return content.includes('서울') && content.includes('폭염');
+    });
+    if (!seoulHeat.length) return { level: 0, label: '없음', message: '' };
+    const content = seoulHeat[0].CONTENT || seoulHeat[0].TITLE || '';
+    if (content.includes('중대경보')) return { level: 3, label: '폭염 중대경보', message: content.slice(0,60) };
+    if (content.includes('경보'))    return { level: 2, label: '폭염경보',      message: content.slice(0,60) };
+    if (content.includes('주의보'))  return { level: 1, label: '폭염주의보',    message: content.slice(0,60) };
+    return { level: 0, label: '없음', message: '' };
+  } catch(e) {
+    console.log('특보 API 실패(fallback):', e.message);
+    return { level: -1, label: '조회불가', message: '' };
+  }
+}
+
+// ────────────────────────────────────────────────
+//  DAILY 포스터 (기존과 동일한 디자인)
+// ────────────────────────────────────────────────
+async function drawDailyPoster(weather) {
+  const W=800, H=1131;
   const canvas = createCanvas(W, H);
   const ctx = canvas.getContext('2d');
-
   const fl = weather.feelsLike;
   const stage = getStage(fl);
   const color = SC[stage];
-  const label = SLABEL[stage];
-
-  const now = new Date(Date.now() + 9 * 3600 * 1000);
-  const pad = n => String(n).padStart(2, '0');
-  const dateStr = `${now.getUTCFullYear()}.${pad(now.getUTCMonth() + 1)}.${pad(now.getUTCDate())}`;
+  const now = kNow();
+  const dateStr = fmtDate(now);
   const timeStr = `${pad(now.getUTCHours())}:${pad(now.getUTCMinutes())}`;
 
-  ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, W, H);
-  ctx.fillStyle = color; ctx.fillRect(0, 0, W, 12);
+  ctx.fillStyle='#ffffff'; ctx.fillRect(0,0,W,H);
+  ctx.fillStyle=color; ctx.fillRect(0,0,W,12);
 
-  ctx.fillStyle = '#0a0e1a'; ctx.font = 'bold 26px Nanum'; ctx.textAlign = 'left';
+  ctx.fillStyle='#0a0e1a'; ctx.font='bold 26px Nanum'; ctx.textAlign='left';
   ctx.fillText('성동자이리버뷰', 60, 80);
-  ctx.fillStyle = '#5a6175'; ctx.font = '18px Nanum';
+  ctx.fillStyle='#5a6175'; ctx.font='18px Nanum';
   ctx.fillText('온열질환 예방 안전수칙', 60, 110);
-  ctx.textAlign = 'right'; ctx.fillStyle = '#5a6175'; ctx.font = '16px Nanum';
-  ctx.fillText(`${dateStr}  ${timeStr} 기준`, W - 60, 80);
+  ctx.textAlign='right'; ctx.font='16px Nanum';
+  ctx.fillText(`${dateStr}  ${timeStr} 기준`, W-60, 80);
 
-  // 로고 (저장소에 gsenc_logo.png가 있으면 삽입)
   try {
-    const logoPath = path.join(__dirname, '..', 'gsenc_logo.png');
+    const logoPath = path.join(__dirname,'..','gsenc_logo.png');
     if (fs.existsSync(logoPath)) {
       const logo = await loadImage(logoPath);
-      const lw = 90, lh = lw * (logo.height / logo.width);
-      ctx.drawImage(logo, W - 60 - lw, 92, lw, lh);
+      const lw=90, lh=lw*(logo.height/logo.width);
+      ctx.drawImage(logo, W-60-lw, 92, lw, lh);
     }
-  } catch (e) {}
+  } catch(e) {}
 
-  ctx.strokeStyle = '#e5e7eb'; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(60, 135); ctx.lineTo(W - 60, 135); ctx.stroke();
+  ctx.strokeStyle='#e5e7eb'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(60,135); ctx.lineTo(W-60,135); ctx.stroke();
 
-  ctx.fillStyle = color; roundRect(ctx, 60, 165, W - 120, 90, 16); ctx.fill();
-  ctx.fillStyle = '#ffffff'; ctx.textAlign = 'left'; ctx.font = '900 38px Nanum';
-  ctx.fillText(label, 90, 222);
-  ctx.textAlign = 'right'; ctx.font = '18px Nanum';
-  ctx.fillText(stage > 0 ? '작업 시 각별히 주의하세요' : '정상 작업 가능', W - 90, 218);
+  ctx.fillStyle=color; roundRect(ctx,60,165,W-120,90,16); ctx.fill();
+  ctx.fillStyle='#ffffff'; ctx.textAlign='left'; ctx.font='900 38px Nanum';
+  ctx.fillText(SLABEL[stage], 90, 222);
+  ctx.textAlign='right'; ctx.font='18px Nanum';
+  ctx.fillText(stage>0?'작업 시 각별히 주의하세요':'정상 작업 가능', W-90, 218);
 
-  ctx.textAlign = 'center';
-  ctx.fillStyle = '#5a6175'; ctx.font = 'bold 22px Nanum';
-  ctx.fillText('현재 체감온도', W / 2, 320);
-  ctx.fillStyle = color; ctx.font = '900 120px Nanum';
-  ctx.fillText(fl + '°C', W / 2, 440);
+  ctx.textAlign='center';
+  ctx.fillStyle='#5a6175'; ctx.font='bold 22px Nanum';
+  ctx.fillText('현재 체감온도', W/2, 320);
+  ctx.fillStyle=color; ctx.font='900 120px Nanum';
+  ctx.fillText(fl+'°C', W/2, 440);
 
-  const bw = (W - 120 - 20) / 2;
-  ctx.fillStyle = '#f3f4f6';
-  roundRect(ctx, 60, 480, bw, 90, 12); ctx.fill();
-  roundRect(ctx, 60 + bw + 20, 480, bw, 90, 12); ctx.fill();
-  ctx.fillStyle = '#5a6175'; ctx.font = 'bold 16px Nanum'; ctx.textAlign = 'center';
-  ctx.fillText('기온', 60 + bw / 2, 512);
-  ctx.fillText('습도', 60 + bw + 20 + bw / 2, 512);
-  ctx.fillStyle = '#0a0e1a'; ctx.font = 'bold 36px Nanum';
-  ctx.fillText(weather.temp + '°C', 60 + bw / 2, 556);
-  ctx.fillText(weather.humid + '%', 60 + bw + 20 + bw / 2, 556);
+  const bw=(W-120-20)/2;
+  ctx.fillStyle='#f3f4f6';
+  roundRect(ctx,60,480,bw,90,12); ctx.fill();
+  roundRect(ctx,60+bw+20,480,bw,90,12); ctx.fill();
+  ctx.fillStyle='#5a6175'; ctx.font='bold 16px Nanum'; ctx.textAlign='center';
+  ctx.fillText('기온',60+bw/2,512); ctx.fillText('습도',60+bw+20+bw/2,512);
+  ctx.fillStyle='#0a0e1a'; ctx.font='bold 36px Nanum';
+  ctx.fillText(weather.temp+'°C',60+bw/2,556);
+  ctx.fillText(weather.humid+'%',60+bw+20+bw/2,556);
 
-  ctx.fillStyle = '#0a0e1a'; ctx.font = 'bold 22px Nanum'; ctx.textAlign = 'left';
+  ctx.fillStyle='#0a0e1a'; ctx.font='bold 22px Nanum'; ctx.textAlign='left';
   ctx.fillText('폭염안전 5대 기본수칙', 60, 640);
-  ctx.fillStyle = color; ctx.fillRect(60, 652, 60, 3);
-  let y = 688;
-  PREVENT5.forEach((item, i) => {
-    ctx.fillStyle = color; ctx.beginPath(); ctx.arc(78, y - 6, 16, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#fff'; ctx.font = 'bold 16px Nanum'; ctx.textAlign = 'center';
-    ctx.fillText(String(i + 1), 78, y);
-    ctx.fillStyle = color; ctx.font = 'bold 16px Nanum'; ctx.textAlign = 'left';
-    ctx.fillText(item.tag, 110, y - 9);
-    ctx.fillStyle = '#1a2235'; ctx.font = '15px Nanum';
-    ctx.fillText(item.txt, 110, y + 11);
-    y += 58;
+  ctx.fillStyle=color; ctx.fillRect(60,652,60,3);
+  let y=688;
+  PREVENT5.forEach((item,i)=>{
+    ctx.fillStyle=color; ctx.beginPath(); ctx.arc(78,y-6,16,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#fff'; ctx.font='bold 16px Nanum'; ctx.textAlign='center';
+    ctx.fillText(String(i+1), 78, y);
+    ctx.fillStyle=color; ctx.font='bold 16px Nanum'; ctx.textAlign='left';
+    ctx.fillText(item.tag, 110, y-9);
+    ctx.fillStyle='#1a2235'; ctx.font='15px Nanum';
+    ctx.fillText(item.txt, 110, y+11);
+    y+=58;
   });
 
-  ctx.fillStyle = '#fef2f2'; roundRect(ctx, 60, y + 10, W - 120, 70, 12); ctx.fill();
-  ctx.fillStyle = '#ef4444'; ctx.font = 'bold 20px Nanum'; ctx.textAlign = 'left';
-  ctx.fillText('응급상황 발생 시', 90, y + 52);
-  ctx.font = 'bold 24px Nanum'; ctx.textAlign = 'right';
-  ctx.fillText('즉시 119 신고', W - 90, y + 52);
+  ctx.fillStyle='#fef2f2'; roundRect(ctx,60,y+10,W-120,70,12); ctx.fill();
+  ctx.fillStyle='#ef4444'; ctx.font='bold 20px Nanum'; ctx.textAlign='left';
+  ctx.fillText('응급상황 발생 시', 90, y+52);
+  ctx.font='bold 24px Nanum'; ctx.textAlign='right';
+  ctx.fillText('즉시 119 신고', W-90, y+52);
 
-  ctx.fillStyle = '#9ca3af'; ctx.font = '13px Nanum'; ctx.textAlign = 'center';
-  ctx.fillText('GS E&C · 2026년 온열질환 예방대책 기준 적용 · 본 안내문은 자동 생성되었습니다', W / 2, H - 40);
+  ctx.fillStyle='#9ca3af'; ctx.font='13px Nanum'; ctx.textAlign='center';
+  ctx.fillText('GS E&C · 2026년 온열질환 예방대책 기준 적용 · 기상청 오픈API', W/2, H-40);
 
   return canvas;
 }
 
-(async () => {
-  try {
-    const weather = await fetchWeather();
-    console.log(`체감온도 ${weather.feelsLike}°C (기온 ${weather.temp}°C, 습도 ${weather.humid}%)`);
-    const canvas = await drawPoster(weather);
+// ────────────────────────────────────────────────
+//  FORECAST 포스터 (내일 07~17시 예보 + 폭염특보)
+// ────────────────────────────────────────────────
+async function drawForecastPoster(hours, alert, tomorrowStr) {
+  // 카카오톡 공지용 정사각형 1080x1080 레이아웃 (4분기)
+  const W=1080, H=1080;
+  const canvas = createCanvas(W, H);
+  const ctx = canvas.getContext('2d');
 
-    const now = new Date(Date.now() + 9 * 3600 * 1000);
-    const pad = n => String(n).padStart(2, '0');
-    const dir = path.join(__dirname, '..', 'snapshots');
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    const fn = `${now.getUTCFullYear()}-${pad(now.getUTCMonth() + 1)}-${pad(now.getUTCDate())}-${pad(now.getUTCHours())}${pad(now.getUTCMinutes())}.jpg`;
-    const out = path.join(dir, fn);
-    const buf = canvas.toBuffer('image/jpeg', { quality: 0.92 });
-    fs.writeFileSync(out, buf);
-    console.log('포스터 저장 완료:', fn);
-  } catch (e) {
-    console.error('생성 실패:', e);
+  const maxFl = Math.max(...hours.map(h=>h.fl));
+  const topStage = getStage(maxFl);
+  const topColor = SC[topStage];
+
+  // 시간대 분류
+  const stopOut  = hours.filter(h=>h.fl>=35).map(h=>h.hour);   // 옥외중지 35↑
+  const fullStop = hours.filter(h=>h.fl>=38).map(h=>h.hour);   // 전면중지 38↑
+
+  // 구간 묶기 헬퍼
+  function ranges(nums){
+    if(!nums.length) return [];
+    nums=nums.slice().sort((a,b)=>a-b);
+    const out=[[nums[0],nums[0]]];
+    for(let k=1;k<nums.length;k++){
+      if(nums[k]===out[out.length-1][1]+1) out[out.length-1][1]=nums[k];
+      else out.push([nums[k],nums[k]]);
+    }
+    return out;
+  }
+  const fmt = rs => rs.map(([a,b])=> a!==b? `${a}~${b}시` : `${a}시`).join(', ');
+
+  // 폭염특보 텍스트
+  const alertLabel = alert.level===0?'없음':alert.level===-1?'조회불가':alert.label;
+
+  ctx.fillStyle='#ffffff'; ctx.fillRect(0,0,W,H);
+
+  // ── 상단 색 헤더 ──
+  const headH=336;
+  ctx.fillStyle=topColor; ctx.fillRect(0,0,W,headH);
+  ctx.fillStyle='#ffffff'; ctx.textAlign='left'; ctx.textBaseline='alphabetic';
+  ctx.font='bold 40px Nanum';
+  ctx.fillText('성동자이리버뷰', 70, 88);
+  ctx.font='26px Nanum';
+  ctx.fillText(`${tomorrowStr} 체감온도 예보`, 70, 130);
+  // 특보 배지
+  const bw=210;
+  ctx.fillStyle='#ffffff'; roundRect(ctx, W-70-bw, 52, bw, 56, 28); ctx.fill();
+  ctx.fillStyle=topColor; ctx.font='900 28px Nanum'; ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText(alertLabel, W-70-bw/2, 52+28);
+  ctx.textBaseline='alphabetic';
+  // 최고 체감온도
+  ctx.fillStyle='#ffffff'; ctx.textAlign='left';
+  ctx.font='bold 27px Nanum'; ctx.fillText('오늘 최고 체감온도', 70, 188);
+  ctx.font='900 86px Nanum'; ctx.fillText(maxFl+'°C', 70, 268);
+  ctx.textAlign='right'; ctx.textBaseline='middle';
+  ctx.font='900 44px Nanum'; ctx.fillText(SLABEL[topStage], W-70, 246);
+  ctx.textBaseline='alphabetic';
+
+  // ── 중앙 메인: 4분기 ──
+  ctx.textAlign='center';
+  const y=370;
+  if (fullStop.length) {
+    // 전면중지 (38↑)
+    ctx.fillStyle='#64748b'; ctx.font='bold 30px Nanum';
+    ctx.fillText('전면 작업 중지 시간', W/2, y);
+    ctx.fillStyle='#ef4444'; ctx.font='900 82px Nanum';
+    ctx.fillText(fmt(ranges(fullStop)), W/2, y+72);
+    ctx.fillStyle='#ef4444'; ctx.font='bold 24px Nanum';
+    ctx.fillText('옥내·외 전 작업 중지 · 즉시 대피', W/2, y+150);
+    const onlyOut = stopOut.filter(h=>!fullStop.includes(h));
+    if (onlyOut.length) {
+      ctx.fillStyle='#f97316'; ctx.font='bold 21px Nanum';
+      ctx.fillText(`옥외중지 ${fmt(ranges(onlyOut))} · 옥내만 가능(시간당 15분 휴식)`, W/2, y+192);
+    }
+  } else if (stopOut.length) {
+    // 옥외중지 (35~38)
+    ctx.fillStyle='#64748b'; ctx.font='bold 30px Nanum';
+    ctx.fillText('옥외작업 중지 시간', W/2, y);
+    ctx.fillStyle='#ef4444'; ctx.font='900 96px Nanum';
+    ctx.fillText(fmt(ranges(stopOut)), W/2, y+76);
+    // 옥내 안내 박스
+    const bxY=y+162;
+    ctx.fillStyle='#fff1e8'; roundRect(ctx,140,bxY,W-280,52,14); ctx.fill();
+    ctx.strokeStyle='#f97316'; ctx.lineWidth=2; roundRect(ctx,140,bxY,W-280,52,14); ctx.stroke();
+    ctx.fillStyle='#c2410c'; ctx.font='bold 24px Nanum'; ctx.textBaseline='middle';
+    ctx.fillText('이 시간 옥내작업만 가능 · 시간당 15분 휴식', W/2, bxY+26);
+    ctx.textBaseline='alphabetic';
+    // 그 외 시간
+    const other = hours.filter(h=>h.fl<35).map(h=>h.hour);
+    ctx.fillStyle='#16a34a'; ctx.font='bold 24px Nanum';
+    ctx.fillText(`그 외 ${fmt(ranges(other))}  옥내·외 작업 가능`, W/2, bxY+92);
+    if (hours.some(h=>h.fl>=31 && h.fl<35)) {
+      ctx.fillStyle='#94a3b8'; ctx.font='20px Nanum';
+      ctx.fillText('(체감 31°C 이상 시간대는 시간당 10분 휴식)', W/2, bxY+128);
+    }
+  } else {
+    // 옥외중지 없음 (35 미만)
+    const needRest = hours.some(h=>h.fl>=31 && h.fl<35);
+    ctx.fillStyle='#64748b'; ctx.font='bold 30px Nanum';
+    ctx.fillText('오늘 작업 안내', W/2, y);
+    ctx.fillStyle='#16a34a'; ctx.font='900 76px Nanum';
+    ctx.fillText('옥내·외 작업 가능', W/2, y+72);
+    if (needRest) {
+      const restH = hours.filter(h=>h.fl>=31 && h.fl<35).map(h=>h.hour);
+      ctx.fillStyle='#f59e0b'; ctx.font='bold 24px Nanum';
+      ctx.fillText(`체감 31°C↑ ${fmt(ranges(restH))}`, W/2, y+150);
+      ctx.fillStyle='#f59e0b'; ctx.font='900 40px Nanum';
+      ctx.fillText('시간당 10분 휴식', W/2, y+190);
+    } else {
+      ctx.fillStyle='#64748b'; ctx.font='bold 26px Nanum';
+      ctx.fillText('휴식 의무 시간대 없음', W/2, y+150);
+    }
+  }
+
+  // ── 미니 그래프 ──
+  const gy=700, chartX=70, chartW=W-140, chartH=140, chartY=gy;
+  const dmin=Math.min(...hours.map(h=>h.fl)), dmax=Math.max(...hours.map(h=>h.fl));
+  const minV=Math.floor(dmin)-2, maxV=Math.max(Math.ceil(dmax)+1,39);
+  const toY = v => chartY+chartH-(v-minV)/(maxV-minV)*chartH;
+  const n=hours.length, barW=(chartW/n)*0.66, gap=chartW/n;
+  const y35=toY(35);
+  if (chartY<y35 && y35<chartY+chartH) {
+    ctx.fillStyle='#fdecec'; ctx.fillRect(chartX,chartY,chartW,y35-chartY);
+    ctx.fillStyle='#ef4444'; ctx.font='bold 14px Nanum'; ctx.textAlign='left'; ctx.textBaseline='top';
+    ctx.fillText('옥외중지', chartX+8, chartY+4);
+    ctx.textBaseline='alphabetic';
+  }
+  hours.forEach((h,i)=>{
+    const bx=chartX+i*gap+(gap-barW)/2, by=toY(h.fl), c=SC[getStage(h.fl)];
+    ctx.fillStyle=c; roundRect(ctx,bx,by,barW,chartY+chartH-2-by,5); ctx.fill();
+    if (h.fl===dmax){ ctx.strokeStyle='#92400e'; ctx.lineWidth=3; roundRect(ctx,bx,by,barW,chartY+chartH-2-by,5); ctx.stroke(); }
+    ctx.fillStyle=c; ctx.font='bold 18px Nanum'; ctx.textAlign='center';
+    ctx.fillText(String(Math.round(h.fl)), bx+barW/2, by-6);
+    ctx.fillStyle='#94a3b8'; ctx.font='17px Nanum';
+    ctx.fillText(String(h.hour), bx+barW/2, chartY+chartH+19);
+  });
+
+  // ── 하단 박스: 증상 + 연락 ──
+  const by=H-150, boxH=122;
+  ctx.fillStyle='#fdecec'; roundRect(ctx,70,by,W-140,boxH,18); ctx.fill();
+  ctx.strokeStyle='#f5b8b8'; ctx.lineWidth=2; roundRect(ctx,70,by,W-140,boxH,18); ctx.stroke();
+  ctx.fillStyle='#b91c1c'; ctx.font='900 31px Nanum'; ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText('어지럼 · 두통 · 메스꺼움 · 근육경련', W/2, by+37);
+  // 연락 줄 (번호 강조)
+  ctx.textBaseline='middle';
+  const pre='증상 있으면 즉시 ', num='1811-1139', post='로 연락';
+  ctx.font='bold 27px Nanum';
+  const wPre=ctx.measureText(pre).width;
+  ctx.font='900 27px Nanum';
+  const wNum=ctx.measureText(num).width;
+  ctx.font='bold 27px Nanum';
+  const wPost=ctx.measureText(post).width;
+  const total=wPre+wNum+wPost, sx=(W-total)/2, cy=by+84;
+  ctx.textAlign='left';
+  ctx.fillStyle='#334155'; ctx.font='bold 27px Nanum'; ctx.fillText(pre, sx, cy);
+  ctx.fillStyle='#ef4444'; ctx.font='900 27px Nanum'; ctx.fillText(num, sx+wPre, cy);
+  ctx.fillStyle='#334155'; ctx.font='bold 27px Nanum'; ctx.fillText(post, sx+wPre+wNum, cy);
+  ctx.textBaseline='alphabetic';
+
+  return canvas;
+}
+
+
+// ── MAIN ──
+(async ()=>{
+  try {
+    const nowKST  = kNow();
+    const todayStr = dateKey(nowKST);
+
+    if (POSTER_TYPE === 'daily') {
+      // 현재 체감온도
+      const h = nowKST.getUTCHours();
+      const slots=[2,5,8,11,14,17,20,23]; let bh=2;
+      for(const s of slots) if(h>=s) bh=s;
+      const bt = pad(bh)+'00';
+      const items = await fetchForecast(todayStr, bt);
+      const T={}, RH={};
+      items.forEach(i=>{ const k=i.fcstDate+i.fcstTime;
+        if(i.category==='TMP') T[k]=parseFloat(i.fcstValue);
+        if(i.category==='REH') RH[k]=parseFloat(i.fcstValue); });
+      const tk=Object.keys(T).filter(k=>k.startsWith(todayStr)).sort();
+      const nk=todayStr+pad(h)+'00';
+      const cl=tk.reduce((a,b)=>Math.abs(parseInt(b)-parseInt(nk))<Math.abs(parseInt(a)-parseInt(nk))?b:a,tk[0]);
+      const temp=T[cl], humid=RH[cl], feelsLike=heatIndex(temp,humid);
+      console.log(`당일 체감온도: ${feelsLike}°C (기온 ${temp}°C 습도 ${humid}%)`);
+
+      const canvas = await drawDailyPoster({temp, humid, feelsLike});
+      const dir = path.join(__dirname,'..','snapshots','daily');
+      if(!fs.existsSync(dir)) fs.mkdirSync(dir,{recursive:true});
+      const fn = `${todayStr}-${pad(h)}${pad(nowKST.getUTCMinutes())}.jpg`;
+      fs.writeFileSync(path.join(dir,fn), canvas.toBuffer('image/jpeg',{quality:0.92}));
+      console.log('당일 포스터 저장:', fn);
+
+    } else {
+      // 내일 예보
+      const tomorrowKST = new Date(nowKST.getTime()+24*3600*1000);
+      const tomorrowStr = dateKey(tomorrowKST);
+
+      // 오늘 2000 발표 기준으로 내일 데이터 요청
+      const items = await fetchForecast(todayStr, '2000');
+      const T={}, RH={};
+      items.forEach(i=>{ const k=i.fcstDate+i.fcstTime;
+        if(i.category==='TMP') T[k]=parseFloat(i.fcstValue);
+        if(i.category==='REH') RH[k]=parseFloat(i.fcstValue); });
+
+      // 내일 07~17시 데이터
+      const hours=[];
+      for(let h=7;h<=17;h++){
+        const k=tomorrowStr+pad(h)+'00';
+        if(T[k]!==undefined && RH[k]!==undefined)
+          hours.push({hour:h, fl:heatIndex(T[k],RH[k]), t:T[k], rh:RH[k]});
+      }
+      if(!hours.length) throw new Error('내일 예보 데이터 없음');
+      console.log(`내일 예보: ${hours.length}개 시간대, 최고 ${Math.max(...hours.map(h=>h.fl))}°C`);
+
+      // 폭염특보
+      const alert = await fetchHeatAlert();
+      console.log(`폭염특보: ${alert.label}`);
+
+      const canvas = await drawForecastPoster(hours, alert, fmtDate(tomorrowKST));
+      const dir = path.join(__dirname,'..','snapshots','forecast');
+      if(!fs.existsSync(dir)) fs.mkdirSync(dir,{recursive:true});
+      const fn = `${tomorrowStr}.jpg`;
+      fs.writeFileSync(path.join(dir,fn), canvas.toBuffer('image/jpeg',{quality:0.92}));
+      console.log('예보 포스터 저장:', fn);
+    }
+  } catch(e) {
+    console.error('포스터 생성 실패:', e);
     process.exit(1);
   }
 })();
