@@ -43,12 +43,18 @@ const PREVENT5 = [
 const pad  = n => String(n).padStart(2,'0');
 const kNow = () => new Date(Date.now() + 9*3600*1000); // KST
 
-function heatIndex(t, rh) {
-  if (t < 27) return Math.round(t*10)/10;
-  const hi = -8.78469475556 + 1.61139411*t + 2.33854883889*rh
-    - 0.14611605*t*rh - 0.012308094*t*t - 0.0164248277778*rh*rh
-    + 0.002211732*t*t*rh + 0.00072546*t*rh*rh - 0.000003582*t*t*rh*rh;
-  return Math.round(hi*10)/10;
+// 기상청 여름철 체감온도 공식 (2022.6.2~ 적용)
+// Ta: 기온(°C), RH: 상대습도(%)
+function heatIndex(Ta, RH) {
+  // 습구온도 Tw (Stull 추정식)
+  const Tw = Ta*Math.atan(0.151977*Math.sqrt(RH+8.313659))
+    + Math.atan(Ta+RH)
+    - Math.atan(RH-1.67633)
+    + 0.00391838*Math.pow(RH,1.5)*Math.atan(0.023101*RH)
+    - 4.686035;
+  const feels = -0.2442 + 0.55399*Tw + 0.45535*Ta
+    - 0.0022*Tw*Tw + 0.00278*Tw*Ta + 3.0;
+  return Math.round(feels*10)/10;
 }
 function getStage(fl) {
   if (fl>=38) return 4; if (fl>=35) return 3;
