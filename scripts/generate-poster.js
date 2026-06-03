@@ -446,7 +446,10 @@ async function drawForecastPoster(hours, alert, tomorrowStr) {
       const canvas = await drawForecastPoster(hours, alert, fmtDate(tomorrowKST));
       const dir = path.join(__dirname,'..','snapshots','forecast');
       if(!fs.existsSync(dir)) fs.mkdirSync(dir,{recursive:true});
-      const fn = `${tomorrowStr}.jpg`;
+      const isTest = process.env.IS_TEST === 'true';
+      const fn = isTest
+        ? `${tomorrowStr}_test_${pad(nowKST.getUTCHours())}${pad(nowKST.getUTCMinutes())}.jpg`
+        : `${tomorrowStr}.jpg`;
       fs.writeFileSync(path.join(dir,fn), canvas.toBuffer('image/jpeg',{quality:0.92}));
       console.log('예보 포스터 저장:', fn);
     }
