@@ -25,6 +25,7 @@ jobs:
           GRID_NX: '61'
           GRID_NY: '127'
           POSTER_TYPE: 'forecast'
+          IS_TEST: ${{ github.event_name == 'workflow_dispatch' && 'true' || 'false' }}
         run: node scripts/generate-poster.js
       - name: 커밋
         run: |
