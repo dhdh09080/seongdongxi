@@ -75,6 +75,55 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.arcTo(x,y,x+w,y,r); ctx.closePath();
 }
 
+// ── 기상청 초단기실황 API (실제 관측값 — 엑셀 기록과 동일 소스) ──
+async function fetchNcst(baseDate, baseTime) {
+  const url = `https://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getUltraSrtNcst`
+    + `?serviceKey=${encodeURIComponent(API_KEY)}&numOfRows=60&pageNo=1&dataType=JSON`
+    + `&base_date=${baseDate}&base_time=${baseTime}&nx=${NX}&ny=${NY}`;
+  const res = await fetch(url);
+  let data;
+  try { data = await res.json(); }
+  catch(e) { throw new Error(`실황 JSON 파싱 실패 ${baseDate} ${baseTime}`); }
+  const items = data?.response?.body?.items?.item;
+  if (!items) {
+    const code = data?.response?.header?.resultCode;
+    throw new Error(`실황 없음 ${baseDate} ${baseTime} (resultCode=${code})`);
+  }
+  const m = {};
+  items.forEach(i => { m[i.category] = parseFloat(i.obsrValue); });
+  if (m.T1H === undefined || m.REH === undefined) throw new Error(`기온/습도 항목 없음 ${baseTime}`);
+  return { temp: m.T1H, humid: m.REH };
+}
+
+// 현재 시각 기준 최신 실황을 가져온다 (엑셀 record-data.js와 동일 로직).
+// 실황은 매시 40분 이후 제공되므로, 분<40이면 한 시간 전 정시를 조회한다.
+async function fetchNcstAuto() {
+  const now = kNow();
+  let obsHour = now.getUTCHours();
+  if (now.getUTCMinutes() < 40) obsHour -= 1;
+  const today = dateKey(now);
+  const yest  = dateKey(new Date(now.getTime() - 86400000));
+  // 자정 전후 보정: obsHour가 음수면 어제 23시
+  const candidates = [];
+  if (obsHour >= 0) candidates.push([today, pad(obsHour)+'00']);
+  else candidates.push([yest, '2300']);
+  // 혹시 실패하면 직전 정시들로 재시도
+  for (let k=1; k<=3; k++) {
+    let hh = (obsHour>=0?obsHour:23) - k;
+    if (hh >= 0) candidates.push([today, pad(hh)+'00']);
+    else candidates.push([yest, pad(24+hh)+'00']);
+  }
+  let lastErr;
+  for (const [bd, bt] of candidates) {
+    try {
+      const r = await fetchNcst(bd, bt);
+      console.log(`실황 조회 성공: ${bd} ${bt} → ${r.temp}°C ${r.humid}%`);
+      return { ...r, obsTime: `${bt.slice(0,2)}:00` };
+    } catch(e) { lastErr = e; }
+  }
+  throw lastErr || new Error('실황 조회 실패');
+}
+
 // ── 기상청 단기예보 API ──
 async function fetchForecast(baseDate, baseTime) {
   const url = `https://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getVilageFcst`
@@ -397,19 +446,11 @@ async function drawForecastPoster(hours, alert, tomorrowStr) {
     const todayStr = dateKey(nowKST);
 
     if (POSTER_TYPE === 'daily') {
-      // 현재 체감온도 (최신 발표분 자동 조회)
+      // 현재 체감온도 — 초단기실황(실제 관측값) 사용. 엑셀 기록과 동일한 데이터.
       const h = nowKST.getUTCHours();
-      const items = await fetchForecastAuto();
-      const T={}, RH={};
-      items.forEach(i=>{ const k=i.fcstDate+i.fcstTime;
-        if(i.category==='TMP') T[k]=parseFloat(i.fcstValue);
-        if(i.category==='REH') RH[k]=parseFloat(i.fcstValue); });
-      const tk=Object.keys(T).filter(k=>k.startsWith(todayStr)).sort();
-      if(!tk.length) throw new Error('오늘 예보 데이터 없음');
-      const nk=todayStr+pad(h)+'00';
-      const cl=tk.reduce((a,b)=>Math.abs(parseInt(b)-parseInt(nk))<Math.abs(parseInt(a)-parseInt(nk))?b:a,tk[0]);
-      const temp=T[cl], humid=RH[cl], feelsLike=heatIndex(temp,humid);
-      console.log(`당일 체감온도: ${feelsLike}°C (기온 ${temp}°C 습도 ${humid}%)`);
+      const { temp, humid } = await fetchNcstAuto();
+      const feelsLike = heatIndex(temp, humid);
+      console.log(`당일 체감온도(실황): ${feelsLike}°C (기온 ${temp}°C 습도 ${humid}%)`);
 
       const canvas = await drawDailyPoster({temp, humid, feelsLike});
       const dir = path.join(__dirname,'..','snapshots','daily');
@@ -446,10 +487,7 @@ async function drawForecastPoster(hours, alert, tomorrowStr) {
       const canvas = await drawForecastPoster(hours, alert, fmtDate(tomorrowKST));
       const dir = path.join(__dirname,'..','snapshots','forecast');
       if(!fs.existsSync(dir)) fs.mkdirSync(dir,{recursive:true});
-      const isTest = process.env.IS_TEST === 'true';
-      const fn = isTest
-        ? `${tomorrowStr}_test_${pad(nowKST.getUTCHours())}${pad(nowKST.getUTCMinutes())}.jpg`
-        : `${tomorrowStr}.jpg`;
+      const fn = `${tomorrowStr}.jpg`;
       fs.writeFileSync(path.join(dir,fn), canvas.toBuffer('image/jpeg',{quality:0.92}));
       console.log('예보 포스터 저장:', fn);
     }
