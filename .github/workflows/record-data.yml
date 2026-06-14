@@ -23,7 +23,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: npm install xlsx
+      - run: npm install exceljs
       - name: 현재 시각 실황 기록
         env:
           KMA_API_KEY: ${{ secrets.KMA_API_KEY }}
