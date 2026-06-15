@@ -461,9 +461,13 @@ async function drawForecastPoster(hours, alert, tomorrowStr) {
       console.log('당일 포스터 저장:', fn);
 
     } else {
-      // 내일 예보 (최신 발표분 자동 조회 — 단기예보는 +3일까지 제공하므로 내일 데이터 포함)
-      const tomorrowKST = new Date(nowKST.getTime()+24*3600*1000);
-      const tomorrowStr = dateKey(tomorrowKST);
+      // 예보 포스터. 기본은 내일(tomorrow). FORECAST_DAY=today 면 오늘 예보를 뽑는다.
+      // (단기예보는 +3일까지 제공. 오늘분은 아직 지나지 않은 시간대만 온전히 나옴)
+      const forecastDay = (process.env.FORECAST_DAY || 'tomorrow').toLowerCase();
+      const targetKST = forecastDay === 'today'
+        ? nowKST
+        : new Date(nowKST.getTime()+24*3600*1000);
+      const targetStr = dateKey(targetKST);
 
       const items = await fetchForecastAuto();
       const T={}, RH={};
@@ -471,24 +475,24 @@ async function drawForecastPoster(hours, alert, tomorrowStr) {
         if(i.category==='TMP') T[k]=parseFloat(i.fcstValue);
         if(i.category==='REH') RH[k]=parseFloat(i.fcstValue); });
 
-      // 내일 07~17시 데이터 (체감온도는 반올림 정수 — 기상청 표시 기준과 동일)
+      // 대상일 07~17시 데이터 (체감온도는 반올림 정수 — 기상청 표시 기준과 동일)
       const hours=[];
       for(let h=7;h<=17;h++){
-        const k=tomorrowStr+pad(h)+'00';
+        const k=targetStr+pad(h)+'00';
         if(T[k]!==undefined && RH[k]!==undefined)
           hours.push({hour:h, fl:Math.round(heatIndex(T[k],RH[k])), t:T[k], rh:RH[k]});
       }
-      if(!hours.length) throw new Error(`내일(${tomorrowStr}) 07~17시 예보 데이터가 없음 — 발표분이 내일까지 커버하지 못함`);
-      console.log(`내일 예보: ${hours.length}개 시간대, 최고 ${Math.max(...hours.map(h=>h.fl))}°C`);
+      if(!hours.length) throw new Error(`${targetStr} 07~17시 예보 데이터가 없음 — 발표분이 대상일을 커버하지 못하거나 시간대가 이미 지남`);
+      console.log(`${forecastDay} 예보(${targetStr}): ${hours.length}개 시간대, 최고 ${Math.max(...hours.map(h=>h.fl))}°C`);
 
       // 폭염특보
       const alert = await fetchHeatAlert();
       console.log(`폭염특보: ${alert.label}`);
 
-      const canvas = await drawForecastPoster(hours, alert, fmtDate(tomorrowKST));
+      const canvas = await drawForecastPoster(hours, alert, fmtDate(targetKST));
       const dir = path.join(__dirname,'..','snapshots','forecast');
       if(!fs.existsSync(dir)) fs.mkdirSync(dir,{recursive:true});
-      const fn = `${tomorrowStr}.jpg`;
+      const fn = `${targetStr}.jpg`;
       fs.writeFileSync(path.join(dir,fn), canvas.toBuffer('image/jpeg',{quality:0.92}));
       console.log('예보 포스터 저장:', fn);
     }
