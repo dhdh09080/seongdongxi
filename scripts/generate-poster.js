@@ -238,7 +238,7 @@ async function drawDailyPoster(weather) {
   ctx.fillStyle='#5a6175'; ctx.font='bold 22px Nanum';
   ctx.fillText('현재 체감온도', W/2, 320);
   ctx.fillStyle=color; ctx.font='900 120px Nanum';
-  ctx.fillText(fl+'°C', W/2, 440);
+  ctx.fillText(Math.round(fl)+'°C', W/2, 440);
 
   const bw=(W-120-20)/2;
   ctx.fillStyle='#f3f4f6';
@@ -329,7 +329,7 @@ async function drawForecastPoster(hours, alert, tomorrowStr) {
   // 최고 체감온도
   ctx.fillStyle='#ffffff'; ctx.textAlign='left';
   ctx.font='bold 27px Nanum'; ctx.fillText('오늘 최고 체감온도', 70, 188);
-  ctx.font='900 86px Nanum'; ctx.fillText(maxFl+'°C', 70, 268);
+  ctx.font='900 86px Nanum'; ctx.fillText(Math.round(maxFl)+'°C', 70, 268);
   ctx.textAlign='right'; ctx.textBaseline='middle';
   ctx.font='900 44px Nanum'; ctx.fillText(SLABEL[topStage], W-70, 246);
   ctx.textBaseline='alphabetic';
@@ -408,7 +408,7 @@ async function drawForecastPoster(hours, alert, tomorrowStr) {
     ctx.fillStyle=c; roundRect(ctx,bx,by,barW,chartY+chartH-2-by,5); ctx.fill();
     if (h.fl===dmax){ ctx.strokeStyle='#92400e'; ctx.lineWidth=3; roundRect(ctx,bx,by,barW,chartY+chartH-2-by,5); ctx.stroke(); }
     ctx.fillStyle=c; ctx.font='bold 18px Nanum'; ctx.textAlign='center';
-    ctx.fillText(String(Math.floor(h.fl)), bx+barW/2, by-6);
+    ctx.fillText(String(Math.round(h.fl)), bx+barW/2, by-6);
     ctx.fillStyle='#94a3b8'; ctx.font='17px Nanum';
     ctx.fillText(String(h.hour), bx+barW/2, chartY+chartH+19);
   });
@@ -447,9 +447,10 @@ async function drawForecastPoster(hours, alert, tomorrowStr) {
 
     if (POSTER_TYPE === 'daily') {
       // 현재 체감온도 — 초단기실황(실제 관측값) 사용. 엑셀 기록과 동일한 데이터.
+      // 체감온도는 반올림 정수 (표시·단계판정 일치, 기상청 기준과 동일)
       const h = nowKST.getUTCHours();
       const { temp, humid } = await fetchNcstAuto();
-      const feelsLike = heatIndex(temp, humid);
+      const feelsLike = Math.round(heatIndex(temp, humid));
       console.log(`당일 체감온도(실황): ${feelsLike}°C (기온 ${temp}°C 습도 ${humid}%)`);
 
       const canvas = await drawDailyPoster({temp, humid, feelsLike});
@@ -460,57 +461,35 @@ async function drawForecastPoster(hours, alert, tomorrowStr) {
       console.log('당일 포스터 저장:', fn);
 
     } else {
-      // ── 타깃(예보 대상) 날짜 결정 ── ★ 날짜 건너뜀 방지 핵심 로직
-      // 저녁(보통 22시) 예약작업이지만, GitHub Actions 스케줄러 지연으로
-      // 자정을 넘겨 새벽(0~5시)에 실행될 수 있다. 그 경우 nowKST가 이미 다음 날이라
-      // 그냥 +24h 하면 타깃이 하루 더 밀려 "원래 날짜를 건너뛰는" 버그가 난다.
-      //  - 0~5시 실행  → 전날 밤 작업이 늦게 돈 것으로 보고 '오늘'을 타깃으로 유지
-      //  - 그 외(저녁/낮) → 정상적으로 '내일'을 타깃으로
-      const h = nowKST.getUTCHours();
-      const isLateNightRun = (h >= 0 && h < 6);
-      const targetKST = isLateNightRun
-        ? nowKST                                       // 지연 실행: 의도했던 날 = 현재 날짜
-        : new Date(nowKST.getTime() + 24*3600*1000);   // 정상 실행: 내일
-      const targetStr = dateKey(targetKST);
+      // 내일 예보 (최신 발표분 자동 조회 — 단기예보는 +3일까지 제공하므로 내일 데이터 포함)
+      const tomorrowKST = new Date(nowKST.getTime()+24*3600*1000);
+      const tomorrowStr = dateKey(tomorrowKST);
 
-      const dir = path.join(__dirname,'..','snapshots','forecast');
-      if(!fs.existsSync(dir)) fs.mkdirSync(dir,{recursive:true});
-      const fn = `${targetStr}.jpg`;
-      const outPath = path.join(dir, fn);
-
-      // ── 멱등(idempotent) 처리 ── ★ 중복 생성/시각 들쭉날쭉 방지
-      // 백업 cron이 여러 번 돌아도, 해당 날짜 포스터가 이미 있으면 재생성하지 않는다.
-      // → 하루에 정확히 한 장만, 가장 먼저 성공한 회차의 결과로 고정.
-      // (수동 실행 workflow_dispatch 시에는 FORCE=true로 강제 재생성)
-      const FORCE = process.env.FORCE === 'true';
-      if (fs.existsSync(outPath) && !FORCE) {
-        console.log(`이미 생성됨 → 스킵: ${fn}`);
-        return;
-      }
-
-      // 최신 발표분 자동 조회 — 단기예보는 +3일까지 제공하므로 타깃일 데이터 포함
       const items = await fetchForecastAuto();
       const T={}, RH={};
       items.forEach(i=>{ const k=i.fcstDate+i.fcstTime;
         if(i.category==='TMP') T[k]=parseFloat(i.fcstValue);
         if(i.category==='REH') RH[k]=parseFloat(i.fcstValue); });
 
-      // 타깃일 07~17시 데이터 (loop 변수는 위의 h(현재 시)와 충돌 방지 위해 hh 사용)
+      // 내일 07~17시 데이터 (체감온도는 반올림 정수 — 기상청 표시 기준과 동일)
       const hours=[];
-      for(let hh=7;hh<=17;hh++){
-        const k=targetStr+pad(hh)+'00';
+      for(let h=7;h<=17;h++){
+        const k=tomorrowStr+pad(h)+'00';
         if(T[k]!==undefined && RH[k]!==undefined)
-          hours.push({hour:hh, fl:heatIndex(T[k],RH[k]), t:T[k], rh:RH[k]});
+          hours.push({hour:h, fl:Math.round(heatIndex(T[k],RH[k])), t:T[k], rh:RH[k]});
       }
-      if(!hours.length) throw new Error(`타깃일(${targetStr}) 07~17시 예보 데이터가 없음 — 발표분이 해당일까지 커버하지 못함`);
-      console.log(`예보(${targetStr}): ${hours.length}개 시간대, 최고 ${Math.max(...hours.map(h=>h.fl))}°C`);
+      if(!hours.length) throw new Error(`내일(${tomorrowStr}) 07~17시 예보 데이터가 없음 — 발표분이 내일까지 커버하지 못함`);
+      console.log(`내일 예보: ${hours.length}개 시간대, 최고 ${Math.max(...hours.map(h=>h.fl))}°C`);
 
       // 폭염특보
       const alert = await fetchHeatAlert();
       console.log(`폭염특보: ${alert.label}`);
 
-      const canvas = await drawForecastPoster(hours, alert, fmtDate(targetKST));
-      fs.writeFileSync(outPath, canvas.toBuffer('image/jpeg',{quality:0.92}));
+      const canvas = await drawForecastPoster(hours, alert, fmtDate(tomorrowKST));
+      const dir = path.join(__dirname,'..','snapshots','forecast');
+      if(!fs.existsSync(dir)) fs.mkdirSync(dir,{recursive:true});
+      const fn = `${tomorrowStr}.jpg`;
+      fs.writeFileSync(path.join(dir,fn), canvas.toBuffer('image/jpeg',{quality:0.92}));
       console.log('예보 포스터 저장:', fn);
     }
   } catch(e) {
