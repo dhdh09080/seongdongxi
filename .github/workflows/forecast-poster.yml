@@ -1,20 +1,24 @@
-name: 내일 예보 포스터 (22시)
+name: 예보 포스터 (22시)
 
 on:
   schedule:
-    # GitHub Actions 예약 실행은 정시 보장이 안 되고(지연/드롭) 매시 정각은 특히 혼잡함.
-    # 22:00을 주 실행으로 두고, 자정 전 백업 2회를 둠. (포스터가 이미 있으면 스크립트가 알아서 스킵)
-    - cron: '0 13 * * *'    # 22:00 KST (13:00 UTC) — 주 실행
-    - cron: '40 13 * * *'   # 22:40 KST (13:40 UTC) — 백업1 (이미 있으면 스킵)
-    - cron: '20 14 * * *'   # 23:20 KST (14:20 UTC) — 백업2 (이미 있으면 스킵)
+    - cron: '0 13 * * *'   # 22:00 KST (= 13:00 UTC) — 자동 실행 시 '내일' 예보
   workflow_dispatch:
+    inputs:
+      forecast_day:
+        description: '어느 날짜 예보를 뽑을까요?'
+        required: true
+        default: 'tomorrow'
+        type: choice
+        options:
+          - tomorrow
+          - today
 
 permissions:
   contents: write
 
-# 같은 날 백업 cron들이 겹쳐 돌더라도 git push 충돌이 안 나게 직렬화
 concurrency:
-  group: forecast-poster
+  group: repo-commit
   cancel-in-progress: false
 
 jobs:
@@ -28,20 +32,22 @@ jobs:
       - name: 한글 폰트 설치
         run: sudo apt-get update && sudo apt-get install -y fonts-nanum && sudo fc-cache -fv
       - run: npm install canvas
-      - name: 내일 예보 포스터 생성
+      - name: 예보 포스터 생성
         env:
           KMA_API_KEY: ${{ secrets.KMA_API_KEY }}
           GRID_NX: '61'
           GRID_NY: '127'
           POSTER_TYPE: 'forecast'
-          # 수동 실행 시에만 강제 재생성(덮어쓰기). 예약 실행은 멱등(이미 있으면 스킵).
-          FORCE: ${{ github.event_name == 'workflow_dispatch' && 'true' || 'false' }}
+          # 수동 실행 시 선택값 사용, 자동(스케줄) 실행 시 기본 'tomorrow'
+          FORECAST_DAY: ${{ github.event.inputs.forecast_day || 'tomorrow' }}
         run: node scripts/generate-poster.js
       - name: 커밋
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git pull --rebase --autostash || true
           git add snapshots/
-          git diff --staged --quiet || git commit -m "🌅 내일 예보 포스터: $(TZ=Asia/Seoul date +'%Y-%m-%d %H:%M KST')"
-          git push
+          if ! git diff --staged --quiet; then
+            git commit -m "🌅 예보 포스터: $(TZ=Asia/Seoul date +'%Y-%m-%d %H:%M KST')"
+            git pull --rebase --autostash || true
+            git push
+          fi
