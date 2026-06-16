@@ -29,6 +29,7 @@ jobs:
           KMA_API_KEY: ${{ secrets.KMA_API_KEY }}
           GRID_NX: '61'
           GRID_NY: '127'
+          AREA_NO: '1120079000'
         run: node scripts/record-data.js
       - name: 커밋
         run: |
