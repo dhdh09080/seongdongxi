@@ -92,13 +92,13 @@ async function fetchSenTa(timeYmdH) {
   }
   return item; // { date, h1, h2, ... h78 }
 }
-// 대상일(targetYmd)의 fromH~toH시 체감온도 배열을 가장 최근 발표분에서 가져온다.
-// 반환: [{hour, fl}], fl은 정수(기상청 제공값 그대로)
+// 대상일(targetYmd)의 fromH~toH시 체감온도 배열.
+// 1차: 기상청 생활기상지수 A48 (날씨누리와 일치)
+// 폴백: 단기예보 기온·습도로 직접 계산 (A48 API 키 미승인 등 실패 시)
 async function fetchSenTaHours(targetYmd, fromH, toH) {
   const now = kNow();
   const today = dateKey(now);
   const yest  = dateKey(new Date(now.getTime()-86400000));
-  // 시도할 발표시각 후보 (최신순): 오늘18, 오늘06, 어제18, 어제06
   const h = now.getUTCHours();
   const cands = [];
   if (h >= 18) cands.push(today+'18');
@@ -116,9 +116,25 @@ async function fetchSenTaHours(targetYmd, fromH, toH) {
           if (v!==undefined && v!==null && v!=='') out.push({ hour:hh, fl: parseInt(v) });
         }
       }
-      if (out.length) { console.log(`체감온도 조회 성공: 발표 ${t}, ${out.length}개 시간대`); return out; }
+      if (out.length) { console.log(`체감온도(A48) 조회 성공: 발표 ${t}, ${out.length}개 시간대`); return out; }
     } catch(e) { lastErr = e; }
   }
+  // ── 폴백: 단기예보 기온·습도로 계산 ──
+  console.log(`A48 조회 실패(${lastErr?.message}) → 단기예보 폴백`);
+  try {
+    const items = await fetchForecastAuto();
+    const T={}, RH={};
+    items.forEach(i=>{ const k=i.fcstDate+i.fcstTime;
+      if(i.category==='TMP') T[k]=parseFloat(i.fcstValue);
+      if(i.category==='REH') RH[k]=parseFloat(i.fcstValue); });
+    const out = [];
+    for (let hh=fromH; hh<=toH; hh++) {
+      const k=targetYmd+pad(hh)+'00';
+      if(T[k]!==undefined && RH[k]!==undefined)
+        out.push({ hour:hh, fl: Math.round(heatIndex(T[k],RH[k])) });
+    }
+    if (out.length) { console.log(`폴백 성공: ${out.length}개 시간대`); return out; }
+  } catch(e2) { throw new Error(`A48 실패(${lastErr?.message}), 폴백도 실패(${e2.message})`); }
   throw lastErr || new Error('체감온도 조회 실패: 발표분 없음');
 }
 // 단일 시각(targetYmd targetHour)의 체감온도 1개
