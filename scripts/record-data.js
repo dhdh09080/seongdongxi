@@ -17,6 +17,7 @@ const ExcelJS = require('exceljs');
 const API_KEY = process.env.KMA_API_KEY;
 const NX = process.env.GRID_NX || '61';
 const NY = process.env.GRID_NY || '127';
+const AREA_NO = process.env.AREA_NO || '1120079000'; // 성동구 용답동 (생활기상지수 지점코드)
 if (!API_KEY) { console.error('KMA_API_KEY 없음'); process.exit(1); }
 
 const pad  = n => String(n).padStart(2,'0');
@@ -26,14 +27,56 @@ const TITLE  = '성동자이리버뷰 체감온도 기록';
 const HEADER = ['날짜','관측시각','기록시각','기온(°C)','습도(%)','체감온도(°C)','단계'];
 const WIDTHS = [13, 10, 10, 10, 9, 13, 16];
 
-// 기상청 여름철 체감온도 (2022.6.2~)
-function heatIndex(Ta, RH) {
-  const Tw = Ta*Math.atan(0.151977*Math.sqrt(RH+8.313659))
-    + Math.atan(Ta+RH) - Math.atan(RH-1.67633)
-    + 0.00391838*Math.pow(RH,1.5)*Math.atan(0.023101*RH) - 4.686035;
-  const feels = -0.2442 + 0.55399*Tw + 0.45535*Ta - 0.0022*Tw*Tw + 0.00278*Tw*Ta + 3.0;
-  return Math.round(feels*10)/10;
+function dateKey(d){ return `${d.getUTCFullYear()}${pad(d.getUTCMonth()+1)}${pad(d.getUTCDate())}`; }
+
+// ── 기상청 생활기상지수: 건설현장(A48) 체감온도 (날씨누리와 동일, 발표 06·18시) ──
+function sentaHourOffset(baseYmdH, targetYmd, targetHour) {
+  const by=+baseYmdH.slice(0,4), bm=+baseYmdH.slice(4,6), bd=+baseYmdH.slice(6,8), bh=+baseYmdH.slice(8,10);
+  const ty=+targetYmd.slice(0,4), tm=+targetYmd.slice(4,6), td=+targetYmd.slice(6,8);
+  return Math.round((Date.UTC(ty,tm-1,td,targetHour)-Date.UTC(by,bm-1,bd,bh))/3600000);
 }
+async function fetchSenTa(timeYmdH) {
+  const url = `http://apis.data.go.kr/1360000/LivingWthrIdxServiceV2/getSenTaIdxV2`
+    + `?serviceKey=${encodeURIComponent(API_KEY)}&numOfRows=10&pageNo=1&dataType=JSON`
+    + `&areaNo=${AREA_NO}&time=${timeYmdH}&requestCode=A48`;
+  const res = await fetch(url);
+  let data;
+  try { data = await res.json(); }
+  catch(e) { throw new Error(`체감온도 JSON 파싱 실패 ${timeYmdH}`); }
+  const item = data?.response?.body?.items?.item?.[0] || data?.response?.body?.items?.item;
+  if (!item) {
+    const code = data?.response?.header?.resultCode;
+    throw new Error(`체감온도 없음 ${timeYmdH} (resultCode=${code})`);
+  }
+  return item;
+}
+// 대상일 targetHour시의 체감온도(정수) 1개를 최신 발표분에서 가져온다
+async function fetchSenTaOne(targetYmd, targetHour) {
+  const now = kNow();
+  const today = dateKey(now);
+  const yest  = dateKey(new Date(now.getTime()-86400000));
+  const h = now.getUTCHours();
+  const cands = [];
+  if (h >= 18) cands.push(today+'18');
+  if (h >= 6)  cands.push(today+'06');
+  cands.push(yest+'18', yest+'06');
+  let lastErr;
+  for (const t of cands) {
+    try {
+      const item = await fetchSenTa(t);
+      const off = sentaHourOffset(t, targetYmd, targetHour);
+      if (off>=1 && off<=78) {
+        const v = item['h'+off];
+        if (v!==undefined && v!==null && v!=='') {
+          console.log(`체감온도 조회 성공: 발표 ${t}, h${off} = ${v}`);
+          return parseInt(v);
+        }
+      }
+    } catch(e) { lastErr = e; }
+  }
+  throw lastErr || new Error(`체감온도 조회 실패 ${targetYmd} ${targetHour}시`);
+}
+
 function getStageLabel(fl) {
   if (fl>=38) return '4단계 전면중지';
   if (fl>=35) return '3단계 위험';
@@ -42,7 +85,7 @@ function getStageLabel(fl) {
   return '정상';
 }
 
-// 초단기실황 (특정 정시의 실제 관측값)
+// 초단기실황 (기온·습도 — 표시용)
 async function fetchNcst(baseDate, baseTime) {
   const url = `https://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getUltraSrtNcst`
     + `?serviceKey=${encodeURIComponent(API_KEY)}&numOfRows=60&pageNo=1&dataType=JSON`
@@ -110,10 +153,18 @@ async function fetchNcst(baseDate, baseTime) {
       return;
     }
 
-    // 실황 조회 후 추가
-    const { temp, humid } = await fetchNcst(baseDate, obsBaseTime);
-    const feels = heatIndex(temp, humid);
-    dataRows.push([dateStr, obsTime, recTime, temp, humid, feels, getStageLabel(feels)]);
+    // 체감온도 — 기상청 생활기상지수 건설현장(A48) 값 (날씨누리·포스터와 일치)
+    const feels = await fetchSenTaOne(baseDate, obsHour);
+    // 기온·습도 — 초단기실황 (참고 표시용). 실패해도 체감온도는 기록.
+    let temp = null, humid = null;
+    try {
+      const ncst = await fetchNcst(baseDate, obsBaseTime);
+      temp = ncst.temp; humid = ncst.humid;
+    } catch(e) {
+      console.log('기온/습도 실황 조회 실패(체감온도만 기록):', e.message);
+    }
+    dataRows.push([dateStr, obsTime, recTime,
+      temp!=null?temp:'', humid!=null?humid:'', feels, getStageLabel(feels)]);
 
     // 날짜+관측시각 순 정렬
     dataRows.sort((a,b) => (a[0]+a[1]).localeCompare(b[0]+b[1]));
