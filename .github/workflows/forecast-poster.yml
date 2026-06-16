@@ -37,6 +37,7 @@ jobs:
           KMA_API_KEY: ${{ secrets.KMA_API_KEY }}
           GRID_NX: '61'
           GRID_NY: '127'
+          AREA_NO: '1120079000'
           POSTER_TYPE: 'forecast'
           # 수동 실행 시 선택값 사용, 자동(스케줄) 실행 시 기본 'tomorrow'
           FORECAST_DAY: ${{ github.event.inputs.forecast_day || 'tomorrow' }}
