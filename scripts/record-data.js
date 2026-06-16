@@ -68,15 +68,28 @@ async function fetchSenTaOne(targetYmd, targetHour) {
       if (off>=1 && off<=78) {
         const v = item['h'+off];
         if (v!==undefined && v!==null && v!=='') {
-          console.log(`체감온도 조회 성공: 발표 ${t}, h${off} = ${v}`);
+          console.log(`체감온도(A48) 조회 성공: 발표 ${t}, h${off} = ${v}`);
           return parseInt(v);
         }
       }
     } catch(e) { lastErr = e; }
   }
-  throw lastErr || new Error(`체감온도 조회 실패 ${targetYmd} ${targetHour}시`);
+  // 폴백: 초단기실황 기온·습도로 계산
+  console.log(`A48 조회 실패(${lastErr?.message}) → 실황 폴백`);
+  const bDate = targetYmd;
+  const ncst = await fetchNcst(bDate, pad(targetHour)+'00');
+  const feels = Math.round(heatIndex(ncst.temp, ncst.humid));
+  console.log(`폴백: 기온 ${ncst.temp}°C 습도 ${ncst.humid}% → 체감 ${feels}°C`);
+  return feels;
 }
 
+// 기상청 여름철 체감온도 공식 (A48 폴백용)
+function heatIndex(Ta, RH) {
+  const Tw = Ta*Math.atan(0.151977*Math.sqrt(RH+8.313659))
+    + Math.atan(Ta+RH) - Math.atan(RH-1.67633)
+    + 0.00391838*Math.pow(RH,1.5)*Math.atan(0.023101*RH) - 4.686035;
+  return Math.round((-0.2442+0.55399*Tw+0.45535*Ta-0.0022*Tw*Tw+0.00278*Tw*Ta+3.0)*10)/10;
+}
 function getStageLabel(fl) {
   if (fl>=38) return '4단계 전면중지';
   if (fl>=35) return '3단계 위험';
