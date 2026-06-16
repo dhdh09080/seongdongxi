@@ -25,6 +25,7 @@ if (!tryRegister(`${NANUM_DIR}/NanumGothicExtraBold.ttf`, { family:'Nanum', weig
 const API_KEY    = process.env.KMA_API_KEY;
 const NX         = process.env.GRID_NX || '61';
 const NY         = process.env.GRID_NY || '127';
+const AREA_NO    = process.env.AREA_NO || '1120079000'; // 성동구 용답동 (생활기상지수 지점코드)
 const POSTER_TYPE = process.env.POSTER_TYPE || 'daily'; // 'daily' | 'forecast'
 
 if (!API_KEY) { console.error('KMA_API_KEY 없음'); process.exit(1); }
@@ -65,6 +66,66 @@ function fmtDate(d) {
 }
 function dateKey(d) {
   return `${d.getUTCFullYear()}${pad(d.getUTCMonth()+1)}${pad(d.getUTCDate())}`;
+}
+
+// ── 기상청 생활기상지수: 건설현장(A48) 여름철 체감온도 ──
+// 발표 06·18시, 발표시각 +1h~+78h 예측. 기상청 날씨누리 표시값과 동일.
+const SENTA_AREA = AREA_NO;
+function sentaHourOffset(baseYmdH, targetYmd, targetHour) {
+  const by=+baseYmdH.slice(0,4), bm=+baseYmdH.slice(4,6), bd=+baseYmdH.slice(6,8), bh=+baseYmdH.slice(8,10);
+  const ty=+targetYmd.slice(0,4), tm=+targetYmd.slice(4,6), td=+targetYmd.slice(6,8);
+  return Math.round((Date.UTC(ty,tm-1,td,targetHour)-Date.UTC(by,bm-1,bd,bh))/3600000);
+}
+// 발표시각(time) 1건 조회 → { h1:..., h2:..., date } 형태로 반환
+async function fetchSenTa(timeYmdH) {
+  const url = `http://apis.data.go.kr/1360000/LivingWthrIdxServiceV2/getSenTaIdxV2`
+    + `?serviceKey=${encodeURIComponent(API_KEY)}&numOfRows=10&pageNo=1&dataType=JSON`
+    + `&areaNo=${SENTA_AREA}&time=${timeYmdH}&requestCode=A48`;
+  const res = await fetch(url);
+  let data;
+  try { data = await res.json(); }
+  catch(e) { throw new Error(`체감온도 JSON 파싱 실패 ${timeYmdH}`); }
+  const item = data?.response?.body?.items?.item?.[0] || data?.response?.body?.items?.item;
+  if (!item) {
+    const code = data?.response?.header?.resultCode;
+    throw new Error(`체감온도 없음 ${timeYmdH} (resultCode=${code})`);
+  }
+  return item; // { date, h1, h2, ... h78 }
+}
+// 대상일(targetYmd)의 fromH~toH시 체감온도 배열을 가장 최근 발표분에서 가져온다.
+// 반환: [{hour, fl}], fl은 정수(기상청 제공값 그대로)
+async function fetchSenTaHours(targetYmd, fromH, toH) {
+  const now = kNow();
+  const today = dateKey(now);
+  const yest  = dateKey(new Date(now.getTime()-86400000));
+  // 시도할 발표시각 후보 (최신순): 오늘18, 오늘06, 어제18, 어제06
+  const h = now.getUTCHours();
+  const cands = [];
+  if (h >= 18) cands.push(today+'18');
+  if (h >= 6)  cands.push(today+'06');
+  cands.push(yest+'18', yest+'06');
+  let lastErr;
+  for (const t of cands) {
+    try {
+      const item = await fetchSenTa(t);
+      const out = [];
+      for (let hh=fromH; hh<=toH; hh++) {
+        const off = sentaHourOffset(t, targetYmd, hh);
+        if (off>=1 && off<=78) {
+          const v = item['h'+off];
+          if (v!==undefined && v!==null && v!=='') out.push({ hour:hh, fl: parseInt(v) });
+        }
+      }
+      if (out.length) { console.log(`체감온도 조회 성공: 발표 ${t}, ${out.length}개 시간대`); return out; }
+    } catch(e) { lastErr = e; }
+  }
+  throw lastErr || new Error('체감온도 조회 실패: 발표분 없음');
+}
+// 단일 시각(targetYmd targetHour)의 체감온도 1개
+async function fetchSenTaOne(targetYmd, targetHour) {
+  const arr = await fetchSenTaHours(targetYmd, targetHour, targetHour);
+  if (!arr.length) throw new Error(`체감온도 없음 ${targetYmd} ${targetHour}시`);
+  return arr[0].fl;
 }
 
 // ── canvas 헬퍼 ──
@@ -247,8 +308,8 @@ async function drawDailyPoster(weather) {
   ctx.fillStyle='#5a6175'; ctx.font='bold 16px Nanum'; ctx.textAlign='center';
   ctx.fillText('기온',60+bw/2,512); ctx.fillText('습도',60+bw+20+bw/2,512);
   ctx.fillStyle='#0a0e1a'; ctx.font='bold 36px Nanum';
-  ctx.fillText(weather.temp+'°C',60+bw/2,556);
-  ctx.fillText(weather.humid+'%',60+bw+20+bw/2,556);
+  ctx.fillText((weather.temp!=null?weather.temp:'—')+'°C',60+bw/2,556);
+  ctx.fillText((weather.humid!=null?weather.humid:'—')+'%',60+bw+20+bw/2,556);
 
   ctx.fillStyle='#0a0e1a'; ctx.font='bold 22px Nanum'; ctx.textAlign='left';
   ctx.fillText('폭염안전 5대 기본수칙', 60, 640);
@@ -446,12 +507,22 @@ async function drawForecastPoster(hours, alert, tomorrowStr) {
     const todayStr = dateKey(nowKST);
 
     if (POSTER_TYPE === 'daily') {
-      // 현재 체감온도 — 초단기실황(실제 관측값) 사용. 엑셀 기록과 동일한 데이터.
-      // 체감온도는 반올림 정수 (표시·단계판정 일치, 기상청 기준과 동일)
+      // 현재 체감온도 — 기상청 생활기상지수 건설현장(A48) 값 (날씨누리와 일치).
+      // 기온·습도는 초단기실황에서 받아 함께 표시.
       const h = nowKST.getUTCHours();
-      const { temp, humid } = await fetchNcstAuto();
-      const feelsLike = Math.round(heatIndex(temp, humid));
-      console.log(`당일 체감온도(실황): ${feelsLike}°C (기온 ${temp}°C 습도 ${humid}%)`);
+      // 실황은 매시 40분 이후 제공 → 분<40이면 한 시간 전 정시 기준
+      let obsHour = h; if (nowKST.getUTCMinutes() < 40) obsHour -= 1;
+      if (obsHour < 0) obsHour = 0;
+      const feelsLike = await fetchSenTaOne(todayStr, obsHour); // 정수
+      let temp, humid;
+      try {
+        const ncst = await fetchNcstAuto();
+        temp = ncst.temp; humid = ncst.humid;
+      } catch(e) {
+        console.log('실황 조회 실패(기온/습도 생략):', e.message);
+        temp = null; humid = null;
+      }
+      console.log(`당일 체감온도(A48): ${feelsLike}°C` + (temp!=null?` (기온 ${temp}°C 습도 ${humid}%)`:''));
 
       const canvas = await drawDailyPoster({temp, humid, feelsLike});
       const dir = path.join(__dirname,'..','snapshots','daily');
@@ -461,28 +532,17 @@ async function drawForecastPoster(hours, alert, tomorrowStr) {
       console.log('당일 포스터 저장:', fn);
 
     } else {
-      // 예보 포스터. 기본은 내일(tomorrow). FORECAST_DAY=today 면 오늘 예보를 뽑는다.
-      // (단기예보는 +3일까지 제공. 오늘분은 아직 지나지 않은 시간대만 온전히 나옴)
+      // 예보 포스터. 기본은 내일(tomorrow). FORECAST_DAY=today 면 오늘 예보.
+      // 체감온도는 기상청 생활기상지수 건설현장(A48) 값 그대로 사용 → 날씨누리와 100% 일치
       const forecastDay = (process.env.FORECAST_DAY || 'tomorrow').toLowerCase();
       const targetKST = forecastDay === 'today'
         ? nowKST
         : new Date(nowKST.getTime()+24*3600*1000);
       const targetStr = dateKey(targetKST);
 
-      const items = await fetchForecastAuto();
-      const T={}, RH={};
-      items.forEach(i=>{ const k=i.fcstDate+i.fcstTime;
-        if(i.category==='TMP') T[k]=parseFloat(i.fcstValue);
-        if(i.category==='REH') RH[k]=parseFloat(i.fcstValue); });
-
-      // 대상일 07~17시 데이터 (체감온도는 반올림 정수 — 기상청 표시 기준과 동일)
-      const hours=[];
-      for(let h=7;h<=17;h++){
-        const k=targetStr+pad(h)+'00';
-        if(T[k]!==undefined && RH[k]!==undefined)
-          hours.push({hour:h, fl:Math.round(heatIndex(T[k],RH[k])), t:T[k], rh:RH[k]});
-      }
-      if(!hours.length) throw new Error(`${targetStr} 07~17시 예보 데이터가 없음 — 발표분이 대상일을 커버하지 못하거나 시간대가 이미 지남`);
+      // 대상일 07~17시 체감온도 (정수, 기상청 제공값)
+      const hours = await fetchSenTaHours(targetStr, 7, 17);
+      if(!hours.length) throw new Error(`${targetStr} 07~17시 체감온도 데이터가 없음 — 발표분이 대상일을 커버하지 못함`);
       console.log(`${forecastDay} 예보(${targetStr}): ${hours.length}개 시간대, 최고 ${Math.max(...hours.map(h=>h.fl))}°C`);
 
       // 폭염특보
