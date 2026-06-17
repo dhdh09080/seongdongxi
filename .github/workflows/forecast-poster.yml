@@ -3,16 +3,7 @@ name: 예보 포스터 (18시)
 on:
   schedule:
     - cron: '10 9 * * *'   # 18:10 KST (= 09:10 UTC) — 기상청 생활기상지수 18시 발표 직후
-  workflow_dispatch:
-    inputs:
-      forecast_day:
-        description: '어느 날짜 예보를 뽑을까요?'
-        required: true
-        default: 'tomorrow'
-        type: choice
-        options:
-          - tomorrow
-          - today
+  workflow_dispatch:        # 수동 실행 — 선택 없이 항상 한국시간 기준 다음날 포스터 생성
 
 permissions:
   contents: write
@@ -39,7 +30,7 @@ jobs:
           GRID_NY: '127'
           AREA_NO: '1120079000'
           POSTER_TYPE: 'forecast'
-          FORECAST_DAY: ${{ github.event.inputs.forecast_day || 'tomorrow' }}
+          FORECAST_DAY: 'tomorrow'
         run: node scripts/generate-poster.js
       - name: 커밋
         run: |
