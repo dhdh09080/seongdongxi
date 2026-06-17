@@ -131,8 +131,8 @@ async function fetchNcst(baseDate, baseTime) {
     if (now.getUTCMinutes() < 40) obsHour -= 1;
     if (obsHour < 0) { console.log('자정 이전 정시 없음 — 종료'); return; }
     // 06~17시만 기록
-    if (obsHour < 6 || obsHour > 17) {
-      console.log(`관측시각 ${pad(obsHour)}시는 기록 범위(06~17시) 밖 — 건너뜀`);
+    if (obsHour < 7 || obsHour > 17) {
+      console.log(`관측시각 ${pad(obsHour)}시는 기록 범위(07~17시) 밖 — 건너뜀`);
       return;
     }
     const obsTime = pad(obsHour) + ':00';
