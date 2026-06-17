@@ -548,10 +548,16 @@ async function drawForecastPoster(hours, alert, tomorrowStr) {
       console.log('당일 포스터 저장:', fn);
 
     } else {
-      // 예보 포스터 — 항상 한국시간(KST) 기준 다음날 07~17시 예보
-      // 체감온도는 기상청 생활기상지수 건설현장(A48) 값 그대로 사용 → 날씨누리와 100% 일치
-      const targetKST = new Date(nowKST.getTime()+24*3600*1000); // KST 기준 내일
+      // 예보 포스터 — KST 18시 기준으로 자동 분기
+      // 18시 이전: 오늘 예보 (당일 포스터 재생성/수정 대응)
+      // 18시 이후: 내일 예보 (18시 발표 직후부터 다음날 포스터 생성)
+      const kstHour = nowKST.getUTCHours();
+      const isTomorrow = kstHour >= 18;
+      const targetKST = isTomorrow
+        ? new Date(nowKST.getTime()+24*3600*1000)
+        : nowKST;
       const targetStr = dateKey(targetKST);
+      console.log(`예보 대상: ${targetStr} (KST ${kstHour}시 → ${isTomorrow?'내일':'오늘'})`);
 
       // 대상일 07~17시 체감온도 (정수, 기상청 제공값)
       const hours = await fetchSenTaHours(targetStr, 7, 17);
@@ -565,7 +571,9 @@ async function drawForecastPoster(hours, alert, tomorrowStr) {
       const canvas = await drawForecastPoster(hours, alert, fmtDate(targetKST));
       const dir = path.join(__dirname,'..','snapshots','forecast');
       if(!fs.existsSync(dir)) fs.mkdirSync(dir,{recursive:true});
-      const fn = `${targetStr}.jpg`;
+      // 파일명: {대상날짜}-{KST생성시각}.jpg (예: 20260618-1810.jpg)
+      const genH = pad(nowKST.getUTCHours()), genM = pad(nowKST.getUTCMinutes());
+      const fn = `${targetStr}-${genH}${genM}.jpg`;
       fs.writeFileSync(path.join(dir,fn), canvas.toBuffer('image/jpeg',{quality:0.92}));
       console.log('예보 포스터 저장:', fn);
     }
