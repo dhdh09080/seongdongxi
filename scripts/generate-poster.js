@@ -548,18 +548,15 @@ async function drawForecastPoster(hours, alert, tomorrowStr) {
       console.log('당일 포스터 저장:', fn);
 
     } else {
-      // 예보 포스터. 기본은 내일(tomorrow). FORECAST_DAY=today 면 오늘 예보.
+      // 예보 포스터 — 항상 한국시간(KST) 기준 다음날 07~17시 예보
       // 체감온도는 기상청 생활기상지수 건설현장(A48) 값 그대로 사용 → 날씨누리와 100% 일치
-      const forecastDay = (process.env.FORECAST_DAY || 'tomorrow').toLowerCase();
-      const targetKST = forecastDay === 'today'
-        ? nowKST
-        : new Date(nowKST.getTime()+24*3600*1000);
+      const targetKST = new Date(nowKST.getTime()+24*3600*1000); // KST 기준 내일
       const targetStr = dateKey(targetKST);
 
       // 대상일 07~17시 체감온도 (정수, 기상청 제공값)
       const hours = await fetchSenTaHours(targetStr, 7, 17);
       if(!hours.length) throw new Error(`${targetStr} 07~17시 체감온도 데이터가 없음 — 발표분이 대상일을 커버하지 못함`);
-      console.log(`${forecastDay} 예보(${targetStr}): ${hours.length}개 시간대, 최고 ${Math.max(...hours.map(h=>h.fl))}°C`);
+      console.log(`예보(${targetStr}): ${hours.length}개 시간대, 최고 ${Math.max(...hours.map(h=>h.fl))}°C`);
 
       // 폭염특보
       const alert = await fetchHeatAlert();
