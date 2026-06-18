@@ -30,7 +30,7 @@ jobs:
           KMA_API_KEY: ${{ secrets.KMA_API_KEY }}
           GRID_NX: '61'
           GRID_NY: '127'
-          AREA_NO: '1120079000'
+          AREA_NO: '1123060000'
           POSTER_TYPE: 'forecast'
           FORECAST_DAY: 'tomorrow'
         run: node scripts/generate-poster.js
