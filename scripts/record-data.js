@@ -17,7 +17,7 @@ const ExcelJS = require('exceljs');
 const API_KEY = process.env.KMA_API_KEY;
 const NX = process.env.GRID_NX || '61';
 const NY = process.env.GRID_NY || '127';
-const AREA_NO = process.env.AREA_NO || '1120079000'; // 성동구 용답동 (생활기상지수 지점코드)
+const AREA_NO = process.env.AREA_NO || '1123060000'; // 동대문구 답십리제1동 (생활기상지수 지점코드, 격자 61/127)
 if (!API_KEY) { console.error('KMA_API_KEY 없음'); process.exit(1); }
 
 const pad  = n => String(n).padStart(2,'0');
