@@ -559,6 +559,7 @@ async function drawForecastPoster(hours, alert, tomorrowStr, weatherHours) {
   }
   // 카드 우상단에 "예보 · 변동 가능" 태그 — 옥외중지/휴식 시간이 확정이 아니라 예보값임을 각 박스에서 바로 알 수 있게
   function drawForecastTag(x2, yy, color) {
+    const prevAlign = ctx.textAlign, prevBaseline = ctx.textBaseline;
     const txt = '예보 · 변동 가능';
     ctx.font = 'bold 14px Nanum';
     const tw = ctx.measureText(txt).width + 20, th = 26;
@@ -567,7 +568,7 @@ async function drawForecastPoster(hours, alert, tomorrowStr, weatherHours) {
     ctx.strokeStyle = color; ctx.lineWidth = 1.5; roundRect(ctx, tx, yy, tw, th, 13); ctx.stroke();
     ctx.fillStyle = color; ctx.textAlign='center'; ctx.textBaseline='middle';
     ctx.fillText(txt, tx+tw/2, yy+th/2);
-    ctx.textBaseline='alphabetic'; ctx.textAlign='left';
+    ctx.textAlign = prevAlign; ctx.textBaseline = prevBaseline;
   }
   // 카드 내부에 넓은 텍스트를 넣을 때 카드 폭을 넘지 않도록 폰트 크기를 자동으로 줄임
   function fitFont(text, maxW, baseSize, weight) {
