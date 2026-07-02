@@ -243,6 +243,118 @@ async function fetchForecastAuto() {
   throw lastErr || new Error('예보 조회 실패: 시도할 발표시각 없음');
 }
 
+// ── 단기예보에서 하늘상태(SKY)·강수형태(PTY)·강수확률(POP) 시간별 추출 ──
+async function fetchWeatherHours(targetYmd, fromH, toH) {
+  const items = await fetchForecastAuto();
+  const SKY = {}, PTY = {}, POP = {};
+  items.forEach(i => {
+    const k = i.fcstDate + i.fcstTime;
+    if (i.category === 'SKY') SKY[k] = i.fcstValue;
+    if (i.category === 'PTY') PTY[k] = i.fcstValue;
+    if (i.category === 'POP') POP[k] = i.fcstValue;
+  });
+  const out = [];
+  for (let hh = fromH; hh <= toH; hh++) {
+    const k = targetYmd + pad(hh) + '00';
+    out.push({
+      hour: hh,
+      sky: SKY[k] !== undefined ? +SKY[k] : null,
+      pty: PTY[k] !== undefined ? +PTY[k] : 0,
+      pop: POP[k] !== undefined ? +POP[k] : null,
+    });
+  }
+  return out;
+}
+// SKY(1맑음/3구름많음/4흐림) + PTY(0없음/1비/2비눈/3눈/4소나기) → 아이콘 종류
+function weatherIconType(sky, pty) {
+  if (pty === 4) return 'shower';
+  if (pty && pty !== 0) return (pty === 2 || pty === 3) ? 'snow' : 'rain';
+  if (sky === 1) return 'sunny';
+  if (sky === 3) return 'cloudy';
+  return 'overcast';
+}
+const WICON_COLOR = { sunny:'#f59e0b', cloudy:'#94a3b8', overcast:'#64748b', rain:'#3b82f6', shower:'#0ea5e9', snow:'#38bdf8' };
+const WICON_LABEL  = { sunny:'맑음',   cloudy:'구름많음', overcast:'흐림',   rain:'비',       shower:'소나기', snow:'눈' };
+// 강수 시간대인지 (아이콘 아래 문구 표시 여부 판단용)
+const IS_PRECIP = { rain:true, shower:true, snow:true };
+// 하루 대표 날씨 요약 (헤더 배지용): 강수 있으면 강수 우선 표시, 없으면 정오 무렵 하늘상태
+function summarizeWeather(weatherHours) {
+  const maxPop = Math.max(0, ...weatherHours.map(h => h.pop || 0));
+  const rain = weatherHours.filter(h => h.pty && h.pty !== 0);
+  if (rain.length) {
+    const worstPty = rain.reduce((w,h)=> h.pty>w?h.pty:w, 0);
+    const type = weatherIconType(null, worstPty);
+    return { type, label: WICON_LABEL[type], pop:maxPop };
+  }
+  const mid = weatherHours.find(h=>h.hour===13) || weatherHours.find(h=>h.hour===12) || weatherHours[Math.floor(weatherHours.length/2)] || {};
+  const type = weatherIconType(mid.sky, 0);
+  return { type, label: WICON_LABEL[type], pop:maxPop };
+}
+// 벡터 구름 실루엣
+function drawCloudShape(ctx, ox, oy, r, color) {
+  ctx.save(); ctx.translate(ox, oy); ctx.fillStyle = color;
+  const baseY = r*0.15;
+  ctx.beginPath(); ctx.ellipse(0, baseY, r*0.95, r*0.42, 0, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(-r*0.45, baseY-r*0.15, r*0.4, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(0, baseY-r*0.38, r*0.48, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(r*0.42, baseY-r*0.1, r*0.38, 0, Math.PI*2); ctx.fill();
+  ctx.restore();
+}
+// 날씨 아이콘 (맑음/구름많음/흐림/비/눈)
+function drawWeatherIcon(ctx, type, cx, cy, r, color) {
+  ctx.save(); ctx.translate(cx, cy); ctx.fillStyle = color; ctx.strokeStyle = color;
+  if (type === 'sunny') {
+    ctx.beginPath(); ctx.arc(0,0,r*0.52,0,Math.PI*2); ctx.fill();
+    ctx.lineWidth = Math.max(1.2, r*0.14); ctx.lineCap='round';
+    for (let i=0;i<8;i++) {
+      const a = i*Math.PI/4;
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(a)*r*0.72, Math.sin(a)*r*0.72);
+      ctx.lineTo(Math.cos(a)*r*1.08, Math.sin(a)*r*1.08);
+      ctx.stroke();
+    }
+  } else if (type === 'cloudy') {
+    ctx.beginPath(); ctx.arc(-r*0.35,-r*0.28,r*0.34,0,Math.PI*2); ctx.fill();
+    drawCloudShape(ctx, r*0.12, r*0.18, r*0.88, color);
+  } else if (type === 'overcast') {
+    drawCloudShape(ctx, 0, 0, r, color);
+  } else if (type === 'rain') {
+    drawCloudShape(ctx, 0, -r*0.2, r*0.85, color);
+    ctx.lineWidth = Math.max(1.4, r*0.15); ctx.lineCap='round';
+    [-1,0,1].forEach(i=>{
+      ctx.beginPath();
+      ctx.moveTo(i*r*0.36, r*0.3);
+      ctx.lineTo(i*r*0.36 - r*0.14, r*0.72);
+      ctx.stroke();
+    });
+  } else if (type === 'shower') {
+    // 소나기: 해가 살짝 보이는 비구름 (일반 비와 구분)
+    ctx.beginPath(); ctx.arc(-r*0.42,-r*0.5,r*0.3,0,Math.PI*2); ctx.fill();
+    ctx.lineWidth = Math.max(1, r*0.1); ctx.lineCap='round';
+    for (let i=0;i<5;i++) {
+      const a = -Math.PI*0.9 + i*Math.PI*0.16;
+      ctx.beginPath();
+      ctx.moveTo(-r*0.42+Math.cos(a)*r*0.42, -r*0.5+Math.sin(a)*r*0.42);
+      ctx.lineTo(-r*0.42+Math.cos(a)*r*0.6,  -r*0.5+Math.sin(a)*r*0.6);
+      ctx.stroke();
+    }
+    drawCloudShape(ctx, r*0.12, -r*0.05, r*0.85, color);
+    ctx.lineWidth = Math.max(1.4, r*0.15);
+    [-1,0.4,1.6].forEach(i=>{
+      ctx.beginPath();
+      ctx.moveTo(i*r*0.3, r*0.42);
+      ctx.lineTo(i*r*0.3 - r*0.14, r*0.82);
+      ctx.stroke();
+    });
+  } else if (type === 'snow') {
+    drawCloudShape(ctx, 0, -r*0.2, r*0.85, color);
+    [-1,0,1].forEach(i=>{
+      ctx.beginPath(); ctx.arc(i*r*0.36, r*0.55, r*0.09, 0, Math.PI*2); ctx.fill();
+    });
+  }
+  ctx.restore();
+}
+
 // ── 기상청 폭염특보 API ──
 async function fetchHeatAlert() {
   try {
@@ -357,15 +469,20 @@ async function drawDailyPoster(weather) {
 // ────────────────────────────────────────────────
 //  FORECAST 포스터 (내일 07~17시 예보 + 폭염특보)
 // ────────────────────────────────────────────────
-async function drawForecastPoster(hours, alert, tomorrowStr) {
+async function drawForecastPoster(hours, alert, tomorrowStr, weatherHours) {
+  weatherHours = weatherHours || [];
+  const wMap = new Map(weatherHours.map(w => [w.hour, w]));
+  const weatherSummary = weatherHours.length ? summarizeWeather(weatherHours) : null;
   // 카카오톡 공지용 정사각형 1080x1080 레이아웃 (4분기)
   const W=1080, H=1080;
   const canvas = createCanvas(W, H);
   const ctx = canvas.getContext('2d');
 
   const maxFl = Math.max(...hours.map(h=>h.fl));
-  const topStage = getStage(maxFl);
-  const topColor = SC[topStage];
+  // 근로자 체감 기준 3단계 색상: 31°C 미만(시원함)=파랑, 31~34°C(휴식 필요)=주황, 35°C↑(옥외중지)=빨강
+  // 두 박스(옥외중지/휴식)의 기준과 색이 정확히 일치하도록 통일
+  function heatColor3(fl) { return fl>=35 ? '#ef4444' : fl>=31 ? '#f97316' : '#3b82f6'; }
+  const topColor = heatColor3(maxFl);
 
   // 시간대 분류
   const stopOut  = hours.filter(h=>h.fl>=35).map(h=>h.hour);   // 옥외중지 35↑
@@ -384,111 +501,175 @@ async function drawForecastPoster(hours, alert, tomorrowStr) {
   }
   const fmt = rs => rs.map(([a,b])=> a!==b? `${a}~${b}시` : `${a}시`).join(', ');
 
-  // 폭염특보 텍스트
-  const alertLabel = alert.level===0?'없음':alert.level===-1?'조회불가':alert.label;
+  // 폭염특보 텍스트 — 근로자에게 익숙한 공식 용어(폭염주의보/폭염경보 등)를 그대로 사용
+  const alertLabel = alert.level===0?'특보 없음':alert.level===-1?'특보 확인중':alert.label;
+  const alertTextColor = alert.level>=3?'#7f1d1d':alert.level===2?'#dc2626':alert.level===1?'#f97316':'#64748b';
 
   ctx.fillStyle='#ffffff'; ctx.fillRect(0,0,W,H);
 
   // ── 상단 색 헤더 ──
-  const headH=336;
+  const headH=300;
   ctx.fillStyle=topColor; ctx.fillRect(0,0,W,headH);
   ctx.fillStyle='#ffffff'; ctx.textAlign='left'; ctx.textBaseline='alphabetic';
   ctx.font='bold 40px Nanum';
   ctx.fillText('성동자이리버뷰', 70, 88);
   ctx.font='26px Nanum';
   ctx.fillText(`${tomorrowStr} 체감온도 예보`, 70, 130);
-  // 특보 배지
-  const bw=210;
-  ctx.fillStyle='#ffffff'; roundRect(ctx, W-70-bw, 52, bw, 56, 28); ctx.fill();
-  ctx.fillStyle=topColor; ctx.font='900 28px Nanum'; ctx.textAlign='center'; ctx.textBaseline='middle';
-  ctx.fillText(alertLabel, W-70-bw/2, 52+28);
+  // 폭염특보 배지 — 근로자가 바로 알아볼 수 있도록 크고 분명하게
+  ctx.font='900 32px Nanum';
+  const albw = ctx.measureText(alertLabel).width + 64;
+  const albX = W-70-albw;
+  ctx.fillStyle='#ffffff'; roundRect(ctx, albX, 46, albw, 62, 31); ctx.fill();
+  ctx.fillStyle=alertTextColor; ctx.font='900 32px Nanum'; ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText(alertLabel, albX+albw/2, 46+31);
   ctx.textBaseline='alphabetic';
+  // 폭염주의보 이상 발령 시 현장 조치(얼음물 배부) 안내 — 특보 배지 바로 아래, 특보가 없으면 표시하지 않음
+  if (alert.level>=1) {
+    ctx.fillStyle='rgba(255,255,255,0.95)'; ctx.font='bold 16px Nanum'; ctx.textAlign='right';
+    ctx.fillText('→ 현장 얼음물 배부 시행', W-70, 126);
+  }
+  // 날씨 요약 배지 (아이콘 + 하늘상태 + 강수확률) — 특보 배지 아래
+  if (weatherSummary) {
+    const iconCx = W-250, iconCy=172, iconR=22;
+    drawWeatherIcon(ctx, weatherSummary.type, iconCx, iconCy, iconR, '#ffffff');
+    ctx.textAlign='left'; ctx.textBaseline='middle';
+    ctx.fillStyle='#ffffff'; ctx.font='bold 25px Nanum';
+    ctx.fillText(weatherSummary.label, iconCx+iconR+14, iconCy-8);
+    if (weatherSummary.pop>=30) {
+      ctx.font='19px Nanum'; ctx.fillStyle='rgba(255,255,255,0.9)';
+      ctx.fillText(`강수확률 ${weatherSummary.pop}%`, iconCx+iconR+14, iconCy+17);
+    }
+    ctx.textBaseline='alphabetic';
+  }
   // 최고 체감온도
   ctx.fillStyle='#ffffff'; ctx.textAlign='left';
   ctx.font='bold 27px Nanum'; ctx.fillText('오늘 최고 체감온도', 70, 188);
   ctx.font='900 86px Nanum'; ctx.fillText(Math.round(maxFl)+'°C', 70, 268);
-  ctx.textAlign='right'; ctx.textBaseline='middle';
-  ctx.font='900 44px Nanum'; ctx.fillText(SLABEL[topStage], W-70, 246);
-  ctx.textBaseline='alphabetic';
 
-  // ── 중앙 메인: 4분기 ──
+  // ── 중앙 메인: 옥외작업 중지 시간 / 휴식 시간, 두 개의 고정 박스 ──
+  // 매일 같은 자리에서 같은 정보를 찾을 수 있도록 상황별 분기 없이 두 박스를 항상 표시
   ctx.textAlign='center';
-  const y=370;
-  if (fullStop.length) {
-    // 전면중지 (38↑)
-    ctx.fillStyle='#64748b'; ctx.font='bold 30px Nanum';
-    ctx.fillText('전면 작업 중지 시간', W/2, y);
-    ctx.fillStyle='#ef4444'; ctx.font='900 82px Nanum';
-    ctx.fillText(fmt(ranges(fullStop)), W/2, y+72);
-    ctx.fillStyle='#ef4444'; ctx.font='bold 24px Nanum';
-    ctx.fillText('옥내·외 전 작업 중지 · 즉시 대피', W/2, y+150);
-    const onlyOut = stopOut.filter(h=>!fullStop.includes(h));
-    if (onlyOut.length) {
-      ctx.fillStyle='#f97316'; ctx.font='bold 21px Nanum';
-      ctx.fillText(`옥외중지 ${fmt(ranges(onlyOut))} · 옥내만 가능(시간당 15분 휴식)`, W/2, y+192);
+  const cardX=70, cardW=W-140;
+  const card1Y=332, card1H=158;
+  const card2Y=card1Y+card1H+16, card2H=122;
+
+  function drawCard(x,yy,w,h,bg,border) {
+    ctx.fillStyle=bg; roundRect(ctx,x,yy,w,h,20); ctx.fill();
+    ctx.strokeStyle=border; ctx.lineWidth=2.5; roundRect(ctx,x,yy,w,h,20); ctx.stroke();
+  }
+  // 카드 우상단에 "예보 · 변동 가능" 태그 — 옥외중지/휴식 시간이 확정이 아니라 예보값임을 각 박스에서 바로 알 수 있게
+  function drawForecastTag(x2, yy, color) {
+    const txt = '예보 · 변동 가능';
+    ctx.font = 'bold 14px Nanum';
+    const tw = ctx.measureText(txt).width + 20, th = 26;
+    const tx = x2 - tw;
+    ctx.fillStyle = '#ffffff'; roundRect(ctx, tx, yy, tw, th, 13); ctx.fill();
+    ctx.strokeStyle = color; ctx.lineWidth = 1.5; roundRect(ctx, tx, yy, tw, th, 13); ctx.stroke();
+    ctx.fillStyle = color; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText(txt, tx+tw/2, yy+th/2);
+    ctx.textBaseline='alphabetic'; ctx.textAlign='left';
+  }
+  // 카드 내부에 넓은 텍스트를 넣을 때 카드 폭을 넘지 않도록 폰트 크기를 자동으로 줄임
+  function fitFont(text, maxW, baseSize, weight) {
+    let size = baseSize;
+    ctx.font = `${weight} ${size}px Nanum`;
+    while (ctx.measureText(text).width > maxW && size > 26) {
+      size -= 4; ctx.font = `${weight} ${size}px Nanum`;
     }
-  } else if (stopOut.length) {
-    // 옥외중지 (35~38)
-    ctx.fillStyle='#64748b'; ctx.font='bold 30px Nanum';
-    ctx.fillText('옥외작업 중지 시간', W/2, y);
-    ctx.fillStyle='#ef4444'; ctx.font='900 96px Nanum';
-    ctx.fillText(fmt(ranges(stopOut)), W/2, y+76);
-    // 옥내 안내 박스
-    const bxY=y+162;
-    ctx.fillStyle='#fff1e8'; roundRect(ctx,140,bxY,W-280,52,14); ctx.fill();
-    ctx.strokeStyle='#f97316'; ctx.lineWidth=2; roundRect(ctx,140,bxY,W-280,52,14); ctx.stroke();
-    ctx.fillStyle='#c2410c'; ctx.font='bold 24px Nanum'; ctx.textBaseline='middle';
-    ctx.fillText('이 시간 옥내작업만 가능 · 시간당 15분 휴식', W/2, bxY+26);
-    ctx.textBaseline='alphabetic';
-    // 그 외 시간
-    const other = hours.filter(h=>h.fl<35).map(h=>h.hour);
-    ctx.fillStyle='#16a34a'; ctx.font='bold 24px Nanum';
-    ctx.fillText(`그 외 ${fmt(ranges(other))}  옥내·외 작업 가능`, W/2, bxY+92);
-    if (hours.some(h=>h.fl>=31 && h.fl<35)) {
-      ctx.fillStyle='#94a3b8'; ctx.font='20px Nanum';
-      ctx.fillText('(체감 31°C 이상 시간대는 시간당 10분 휴식)', W/2, bxY+128);
+    return size;
+  }
+
+  const stopHours = stopOut; // 체감 35°C 이상
+  const restHours = hours.filter(h=>h.fl>=31 && h.fl<35).map(h=>h.hour); // 체감 31~35°C
+
+  // 박스1 — 옥외작업 중지 시간 (체감 35°C↑) — 내용 줄 수와 무관하게 박스 세로 중앙에 정렬
+  const c1cy = card1Y + card1H/2;
+  ctx.textBaseline='middle';
+  if (stopHours.length) {
+    drawCard(cardX,card1Y,cardW,card1H,'#fef2f2','#ef4444');
+    drawForecastTag(cardX+cardW-14, card1Y+14, '#ef4444');
+    ctx.fillStyle='#991b1b'; ctx.font='bold 24px Nanum';
+    ctx.fillText('옥외작업 중지 시간 (체감 35°C↑)', W/2, c1cy-50);
+    const rangeTxt1 = fmt(ranges(stopHours));
+    const sz1 = fitFont(rangeTxt1, cardW-80, 60, '900');
+    ctx.fillStyle='#ef4444'; ctx.font=`900 ${sz1}px Nanum`;
+    ctx.fillText(rangeTxt1, W/2, c1cy+4);
+    if (fullStop.length) {
+      ctx.fillStyle='#7f1d1d'; ctx.font='bold 22px Nanum';
+      ctx.fillText(`⚠ ${fmt(ranges(fullStop))} 전면 작업 중지 · 즉시 대피`, W/2, c1cy+54);
+    } else {
+      ctx.fillStyle='#991b1b'; ctx.font='bold 22px Nanum';
+      ctx.fillText('이 시간 옥내작업만 가능', W/2, c1cy+54);
     }
   } else {
-    // 옥외중지 없음 (35 미만)
-    const needRest = hours.some(h=>h.fl>=31 && h.fl<35);
-    ctx.fillStyle='#64748b'; ctx.font='bold 30px Nanum';
-    ctx.fillText('오늘 작업 안내', W/2, y);
-    ctx.fillStyle='#16a34a'; ctx.font='900 76px Nanum';
-    ctx.fillText('옥내·외 작업 가능', W/2, y+72);
-    if (needRest) {
-      const restH = hours.filter(h=>h.fl>=31 && h.fl<35).map(h=>h.hour);
-      ctx.fillStyle='#f59e0b'; ctx.font='bold 24px Nanum';
-      ctx.fillText(`체감 31°C↑ ${fmt(ranges(restH))}`, W/2, y+150);
-      ctx.fillStyle='#f59e0b'; ctx.font='900 40px Nanum';
-      ctx.fillText('시간당 10분 휴식', W/2, y+190);
-    } else {
-      ctx.fillStyle='#64748b'; ctx.font='bold 26px Nanum';
-      ctx.fillText('휴식 의무 시간대 없음', W/2, y+150);
-    }
+    drawCard(cardX,card1Y,cardW,card1H,'#f8fafc','#cbd5e1');
+    drawForecastTag(cardX+cardW-14, card1Y+14, '#94a3b8');
+    ctx.fillStyle='#475569'; ctx.font='bold 24px Nanum';
+    ctx.fillText('옥외작업 중지 시간 (체감 35°C↑)', W/2, c1cy-30);
+    ctx.fillStyle='#16a34a'; ctx.font='900 52px Nanum';
+    ctx.fillText('없음', W/2, c1cy+26);
   }
 
-  // ── 미니 그래프 ──
-  const gy=700, chartX=70, chartW=W-140, chartH=140, chartY=gy;
+  // 박스2 — 휴식 시간 (체감 31~34°C, 사내 기준: 50분 작업 · 10분 휴식) — 동일하게 세로 중앙 정렬
+  const c2cy = card2Y + card2H/2;
+  if (restHours.length) {
+    drawCard(cardX,card2Y,cardW,card2H,'#fff8e6','#f59e0b');
+    drawForecastTag(cardX+cardW-14, card2Y+14, '#f59e0b');
+    ctx.fillStyle='#b45309'; ctx.font='bold 24px Nanum';
+    ctx.fillText('휴식 시간 (체감 31~34°C)', W/2, c2cy-38);
+    const rangeTxt2 = fmt(ranges(restHours));
+    const sz2 = fitFont(rangeTxt2, cardW-80, 44, '900');
+    ctx.fillStyle='#f59e0b'; ctx.font=`900 ${sz2}px Nanum`;
+    ctx.fillText(rangeTxt2, W/2, c2cy+4);
+    ctx.fillStyle='#b45309'; ctx.font='900 22px Nanum';
+    ctx.fillText('50분 작업 · 10분 휴식', W/2, c2cy+42);
+  } else {
+    drawCard(cardX,card2Y,cardW,card2H,'#f8fafc','#cbd5e1');
+    drawForecastTag(cardX+cardW-14, card2Y+14, '#94a3b8');
+    ctx.fillStyle='#475569'; ctx.font='bold 24px Nanum';
+    ctx.fillText('휴식 시간 (체감 31~34°C)', W/2, c2cy-22);
+    ctx.fillStyle='#16a34a'; ctx.font='900 36px Nanum';
+    ctx.fillText('의무 휴식 시간대 없음', W/2, c2cy+24);
+  }
+  ctx.textBaseline='alphabetic';
+
+  // ── 시간대별 체감온도 (박스1·박스2와 같은 카드 스타일로 감싸서 통일감을 줌) ──
+  const gy = card2Y + card2H + 16;
+  const chartCardH = 270;
+  drawCard(cardX, gy, cardW, chartCardH, '#f8fafc', '#cbd5e1');
+
+  const chartX=cardX+20, chartW=cardW-40;
+  ctx.fillStyle='#334155'; ctx.font='bold 22px Nanum'; ctx.textAlign='left'; ctx.textBaseline='alphabetic';
+  ctx.fillText('시간대별 체감온도', chartX, gy+38);
+
+  const iconCy=gy+66, labelY=gy+92, numY=gy+126, chartY=gy+150, chartH=86;
   const dmin=Math.min(...hours.map(h=>h.fl)), dmax=Math.max(...hours.map(h=>h.fl));
-  const minV=Math.floor(dmin)-2, maxV=Math.max(Math.ceil(dmax)+1,39);
+  const minV=Math.floor(dmin)-2, maxV=Math.max(Math.ceil(dmax)+2,39);
   const toY = v => chartY+chartH-(v-minV)/(maxV-minV)*chartH;
   const n=hours.length, barW=(chartW/n)*0.66, gap=chartW/n;
-  const y35=toY(35);
-  if (chartY<y35 && y35<chartY+chartH) {
-    ctx.fillStyle='#fdecec'; ctx.fillRect(chartX,chartY,chartW,y35-chartY);
-    ctx.fillStyle='#ef4444'; ctx.font='bold 14px Nanum'; ctx.textAlign='left'; ctx.textBaseline='top';
-    ctx.fillText('옥외중지', chartX+8, chartY+4);
-    ctx.textBaseline='alphabetic';
-  }
+
   hours.forEach((h,i)=>{
-    const bx=chartX+i*gap+(gap-barW)/2, by=toY(h.fl), c=SC[getStage(h.fl)];
+    const cx=chartX+i*gap+gap/2, bx=cx-barW/2, by=toY(h.fl), c=heatColor3(h.fl);
+    // 날씨 아이콘은 비/소나기/눈이 예보된 시간에만 표시 (맑음·구름은 표시하지 않아 정보량을 줄임)
+    const wh = wMap.get(h.hour);
+    const iType = wh ? weatherIconType(wh.sky, wh.pty) : null;
+    if (iType && IS_PRECIP[iType]) {
+      drawWeatherIcon(ctx, iType, cx, iconCy, 14, WICON_COLOR[iType]);
+      ctx.fillStyle=WICON_COLOR[iType]; ctx.font='bold 14px Nanum'; ctx.textAlign='center';
+      ctx.fillText(WICON_LABEL[iType], cx, labelY);
+    }
+    // 기온 (막대 높이와 무관하게 항상 같은 줄에 정렬)
+    ctx.fillStyle=c; ctx.font='900 24px Nanum'; ctx.textAlign='center';
+    ctx.fillText(String(Math.round(h.fl))+'°', cx, numY);
+    // 막대
     ctx.fillStyle=c; roundRect(ctx,bx,by,barW,chartY+chartH-2-by,5); ctx.fill();
     if (h.fl===dmax){ ctx.strokeStyle='#92400e'; ctx.lineWidth=3; roundRect(ctx,bx,by,barW,chartY+chartH-2-by,5); ctx.stroke(); }
-    ctx.fillStyle=c; ctx.font='bold 18px Nanum'; ctx.textAlign='center';
-    ctx.fillText(String(Math.round(h.fl)), bx+barW/2, by-6);
-    ctx.fillStyle='#94a3b8'; ctx.font='17px Nanum';
-    ctx.fillText(String(h.hour), bx+barW/2, chartY+chartH+19);
+    // 시각 라벨
+    ctx.fillStyle='#334155'; ctx.font='bold 18px Nanum';
+    ctx.fillText(String(h.hour)+'시', cx, chartY+chartH+24);
   });
+
+
 
   // ── 하단 박스: 증상 + 연락 ──
   const by=H-150, boxH=122;
@@ -511,6 +692,9 @@ async function drawForecastPoster(hours, alert, tomorrowStr) {
   ctx.fillStyle='#ef4444'; ctx.font='900 27px Nanum'; ctx.fillText(num, sx+wPre, cy);
   ctx.fillStyle='#334155'; ctx.font='bold 27px Nanum'; ctx.fillText(post, sx+wPre+wNum, cy);
   ctx.textBaseline='alphabetic';
+
+  ctx.fillStyle='#9ca3af'; ctx.font='13px Nanum'; ctx.textAlign='center';
+  ctx.fillText('* 예보 값은 발표 시점 기준이며, 이후 기상 상황에 따라 변동될 수 있습니다', W/2, H-14);
 
   return canvas;
 }
@@ -568,7 +752,16 @@ async function drawForecastPoster(hours, alert, tomorrowStr) {
       const alert = await fetchHeatAlert();
       console.log(`폭염특보: ${alert.label}`);
 
-      const canvas = await drawForecastPoster(hours, alert, fmtDate(targetKST));
+      // 하늘상태·강수형태·강수확률 (날씨 아이콘용) — 실패해도 포스터 생성은 계속 진행
+      let weatherHours = [];
+      try {
+        weatherHours = await fetchWeatherHours(targetStr, 7, 17);
+        console.log(`날씨정보: ${weatherHours.length}개 시간대`);
+      } catch(e) {
+        console.log('날씨정보 조회 실패(아이콘 생략):', e.message);
+      }
+
+      const canvas = await drawForecastPoster(hours, alert, fmtDate(targetKST), weatherHours);
       const dir = path.join(__dirname,'..','snapshots','forecast');
       if(!fs.existsSync(dir)) fs.mkdirSync(dir,{recursive:true});
       // 파일명: {대상날짜}-{KST생성시각}.jpg (예: 20260618-1810.jpg)
